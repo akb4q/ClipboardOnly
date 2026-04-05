@@ -35,7 +35,7 @@ final class MenuBarController: NSObject, ObservableObject {
     private static let screencaptureDomain = "com.apple.screencapture"
     private static let interceptPath = FileManager.default
         .homeDirectoryForCurrentUser
-        .appendingPathComponent(".screenshot_toggle/intercept")
+        .appendingPathComponent(".clipboard_only/intercept")
 
     // MARK: – Init
 

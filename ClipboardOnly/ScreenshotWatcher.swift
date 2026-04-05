@@ -6,7 +6,7 @@ import CoreServices
 final class ScreenshotWatcher {
     private var stream: FSEventStreamRef?
     private let handler: (URL) -> Void
-    private let queue = DispatchQueue(label: "com.akb4q.screenshot-toggle.watcher")
+    private let queue = DispatchQueue(label: "com.akb4q.clipboard-only.watcher")
 
     private static let validExtensions: Set<String> = [
         "png", "jpg", "jpeg", "tiff", "gif", "mov", "mp4"

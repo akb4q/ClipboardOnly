@@ -21,7 +21,7 @@ enum L10n {
 
     private static let strings: [String: [Key: String]] = [
         "zh": [
-            .appName:        "截图助手",
+            .appName:        "ClipboardOnly",
             .toggle:         "仅复制到剪贴板（不保存文件）",
             .saveLocation:   "保存位置: %@",
             .launchAtLogin:  "开机自启动",
@@ -35,7 +35,7 @@ enum L10n {
             .notifError:   "截图处理出错",
         ],
         "en": [
-            .appName:        "Screenshot Toggle",
+            .appName:        "ClipboardOnly",
             .toggle:         "Clipboard Only (don't save file)",
             .saveLocation:   "Save to: %@",
             .launchAtLogin:  "Launch at Login",

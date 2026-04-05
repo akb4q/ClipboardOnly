@@ -24,3 +24,5 @@ xcuserdata/
 
 # Temporary
 /tmp/
+ShortcutManager.swift
+ShortcutPanel.swift

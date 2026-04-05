@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		AA0001000000000000000001 /* ScreenshotToggleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000001 /* ScreenshotToggleApp.swift */; };
+		AA0001000000000000000001 /* ClipboardOnlyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000001 /* ClipboardOnlyApp.swift */; };
 		AA0001000000000000000002 /* AppMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* AppMenuView.swift */; };
 		AA0001000000000000000003 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000003 /* MenuBarController.swift */; };
 		AA0001000000000000000004 /* ScreenshotWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000004 /* ScreenshotWatcher.swift */; };
@@ -16,13 +16,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		AA0000000000000000000001 /* ScreenshotToggleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotToggleApp.swift; sourceTree = "<group>"; };
+		AA0000000000000000000001 /* ClipboardOnlyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardOnlyApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000002 /* AppMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMenuView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000003 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = "<group>"; };
 		AA0000000000000000000004 /* ScreenshotWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotWatcher.swift; sourceTree = "<group>"; };
 		AA0000000000000000000005 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		AA0000000000000000000007 /* ScreenshotToggle.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ScreenshotToggle.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000007 /* ClipboardOnly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClipboardOnly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,28 +39,28 @@
 		AA0003000000000000000001 /* root */ = {
 			isa = PBXGroup;
 			children = (
-				AA0003000000000000000002 /* ScreenshotToggle */,
+				AA0003000000000000000002 /* ClipboardOnly */,
 				AA0003000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		AA0003000000000000000002 /* ScreenshotToggle */ = {
+		AA0003000000000000000002 /* ClipboardOnly */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000001 /* ScreenshotToggleApp.swift */,
+				AA0000000000000000000001 /* ClipboardOnlyApp.swift */,
 				AA0000000000000000000002 /* AppMenuView.swift */,
 				AA0000000000000000000003 /* MenuBarController.swift */,
 				AA0000000000000000000004 /* ScreenshotWatcher.swift */,
 				AA0000000000000000000005 /* L10n.swift */,
 				AA0000000000000000000006 /* Assets.xcassets */,
 			);
-			path = ScreenshotToggle;
+			path = ClipboardOnly;
 			sourceTree = "<group>";
 		};
 		AA0003000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000007 /* ScreenshotToggle.app */,
+				AA0000000000000000000007 /* ClipboardOnly.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,9 +68,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AA0005000000000000000001 /* ScreenshotToggle */ = {
+		AA0005000000000000000001 /* ClipboardOnly */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AA0006000000000000000006 /* Build configuration list for PBXNativeTarget "ScreenshotToggle" */;
+			buildConfigurationList = AA0006000000000000000006 /* Build configuration list for PBXNativeTarget "ClipboardOnly" */;
 			buildPhases = (
 				AA0004000000000000000001 /* Sources */,
 				AA0004000000000000000002 /* Resources */,
@@ -80,9 +80,9 @@
 			);
 			dependencies = (
 			);
-			name = ScreenshotToggle;
-			productName = ScreenshotToggle;
-			productReference = AA0000000000000000000007 /* ScreenshotToggle.app */;
+			name = ClipboardOnly;
+			productName = ClipboardOnly;
+			productReference = AA0000000000000000000007 /* ClipboardOnly.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -95,7 +95,7 @@
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
 			};
-			buildConfigurationList = AA0006000000000000000005 /* Build configuration list for PBXProject "ScreenshotToggle" */;
+			buildConfigurationList = AA0006000000000000000005 /* Build configuration list for PBXProject "ClipboardOnly" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -108,7 +108,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				AA0005000000000000000001 /* ScreenshotToggle */,
+				AA0005000000000000000001 /* ClipboardOnly */,
 			);
 		};
 /* End PBXProject section */
@@ -129,7 +129,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA0001000000000000000001 /* ScreenshotToggleApp.swift in Sources */,
+				AA0001000000000000000001 /* ClipboardOnlyApp.swift in Sources */,
 				AA0001000000000000000002 /* AppMenuView.swift in Sources */,
 				AA0001000000000000000003 /* MenuBarController.swift in Sources */,
 				AA0001000000000000000004 /* ScreenshotWatcher.swift in Sources */,
@@ -267,7 +267,7 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.akb4q.screenshot-toggle";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.akb4q.clipboard-only";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -288,7 +288,7 @@
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.akb4q.screenshot-toggle";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.akb4q.clipboard-only";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -298,7 +298,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AA0006000000000000000005 /* Build configuration list for PBXProject "ScreenshotToggle" */ = {
+		AA0006000000000000000005 /* Build configuration list for PBXProject "ClipboardOnly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0006000000000000000001 /* Debug */,
@@ -307,7 +307,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AA0006000000000000000006 /* Build configuration list for PBXNativeTarget "ScreenshotToggle" */ = {
+		AA0006000000000000000006 /* Build configuration list for PBXNativeTarget "ClipboardOnly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0006000000000000000003 /* Debug */,
