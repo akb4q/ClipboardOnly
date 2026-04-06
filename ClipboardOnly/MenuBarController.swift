@@ -21,14 +21,13 @@ final class MenuBarController: NSObject, ObservableObject {
 
     private var statusItem: NSStatusItem!
     private var hasBadge = false
-    private var badgeShownAt: CFAbsoluteTime = 0
-    private let minBadgeDuration: CFAbsoluteTime = 2.0
 
     private let interceptDir: URL
     private let originalLocation: String
     private let originalTarget: String       // "clipboard", "file", "preview", etc.
     private var watcher: ScreenshotWatcher?
-    private var pasteboardProvider: PasteboardImageProvider?
+    private var badgeChangeCount: Int = 0     // pasteboard changeCount when badge was shown
+    private var badgeTimer: Timer?
     private let shortcutArea:   String = "⌘⇧4"
     private let shortcutScreen: String = "⌘⇧3"
 
@@ -130,23 +129,29 @@ final class MenuBarController: NSObject, ObservableObject {
         statusItem.menu = menu
     }
 
-    // MARK: – Badge（截图后 → 实心图标，粘贴后 → 空心图标）
+    // MARK: – Badge（截图后 → 实心图标，剪贴板内容变化 → 空心图标）
 
     private func showBadge() {
         hasBadge = true
-        badgeShownAt = CFAbsoluteTimeGetCurrent()
         updateButton()
+
+        // Poll pasteboard changeCount — when the user copies something new,
+        // the badge disappears (screenshot no longer in clipboard).
+        badgeChangeCount = NSPasteboard.general.changeCount
+        badgeTimer?.invalidate()
+        badgeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+            [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            if NSPasteboard.general.changeCount != self.badgeChangeCount {
+                timer.invalidate()
+                Task { @MainActor in self.hideBadge() }
+            }
+        }
     }
 
     private func hideBadge() {
-        let elapsed = CFAbsoluteTimeGetCurrent() - badgeShownAt
-        if elapsed < minBadgeDuration {
-            let remaining = minBadgeDuration - elapsed
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-                self?.hideBadge()
-            }
-            return
-        }
+        badgeTimer?.invalidate()
+        badgeTimer = nil
         hasBadge = false
         updateButton()
     }
@@ -168,19 +173,21 @@ final class MenuBarController: NSObject, ObservableObject {
                 guard let image = NSImage(contentsOf: url) else { return }
                 try? FileManager.default.removeItem(at: url)
 
-                pasteboardProvider?.onConsumed = nil
+                // Write image data eagerly (not lazily) so Universal Clipboard
+                // (Handoff to iPhone/iPad) works correctly.
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                if let tiffData = image.tiffRepresentation {
+                    let item = NSPasteboardItem()
+                    item.setData(tiffData, forType: .tiff)
+                    if let rep = NSBitmapImageRep(data: tiffData),
+                       let pngData = rep.representation(using: .png, properties: [:]) {
+                        item.setData(pngData, forType: .png)
+                    }
+                    pb.writeObjects([item])
+                }
 
-                let provider = PasteboardImageProvider(image: image)
-                provider.onConsumed = { [weak self] in self?.hideBadge() }
-                pasteboardProvider = provider
-                let item = NSPasteboardItem()
-                item.setDataProvider(provider, forTypes: [.tiff, .png])
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([item])
-
-                // 核心：切换到实心图标
                 showBadge()
-
                 notify(L10n.str(.notifCopied), L10n.str(.notifNoFile))
             }
         } else {
@@ -281,40 +288,3 @@ final class MenuBarController: NSObject, ObservableObject {
     }
 }
 
-// MARK: – Lazy pasteboard provider
-final class PasteboardImageProvider: NSObject, NSPasteboardItemDataProvider {
-    private var image: NSImage?
-    var onConsumed: (() -> Void)?
-
-    init(image: NSImage) { self.image = image }
-
-    func pasteboard(_ pasteboard: NSPasteboard?,
-                    item: NSPasteboardItem,
-                    provideDataForType type: NSPasteboard.PasteboardType) {
-        defer { consume() }
-        guard let image else { return }
-        switch type {
-        case .tiff:
-            item.setData(image.tiffRepresentation ?? Data(), forType: .tiff)
-        case .png:
-            let rep = image.tiffRepresentation
-                .flatMap { NSBitmapImageRep(data: $0) }
-            if let png = rep?.representation(using: .png, properties: [:]) {
-                item.setData(png, forType: .png)
-            }
-        default:
-            break
-        }
-    }
-
-    func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) {
-        consume()
-    }
-
-    private func consume() {
-        image = nil
-        let cb = onConsumed
-        onConsumed = nil
-        DispatchQueue.main.async { cb?() }
-    }
-}
