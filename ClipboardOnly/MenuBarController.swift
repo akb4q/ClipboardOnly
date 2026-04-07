@@ -5,7 +5,7 @@ import ServiceManagement
 import UserNotifications
 
 @MainActor
-final class MenuBarController: NSObject, ObservableObject {
+final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     @Published var clipboardMode: Bool {
         didSet {
@@ -88,7 +88,12 @@ final class MenuBarController: NSObject, ObservableObject {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
+        populateMenu(menu)
+        statusItem.menu = menu
+    }
 
+    private func populateMenu(_ menu: NSMenu) {
         let toggleItem = NSMenuItem(
             title: L10n.str(.toggle),
             action: #selector(toggleMode),
@@ -104,6 +109,11 @@ final class MenuBarController: NSObject, ObservableObject {
         )
         shortcutInfo.isEnabled = false
         menu.addItem(shortcutInfo)
+
+        menu.addItem(.separator())
+
+        // Clipboard preview section
+        addClipboardPreview(to: menu)
 
         menu.addItem(.separator())
 
@@ -125,8 +135,106 @@ final class MenuBarController: NSObject, ObservableObject {
         )
         quitItem.target = self
         menu.addItem(quitItem)
+    }
 
-        statusItem.menu = menu
+    // MARK: – NSMenuDelegate
+
+    /// Called on main thread by AppKit before the menu is displayed.
+    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            menu.removeAllItems()
+            self.populateMenu(menu)
+        }
+    }
+
+    // MARK: – Clipboard preview
+
+    private func addClipboardPreview(to menu: NSMenu) {
+        let pb = NSPasteboard.general
+        let types = pb.types ?? []
+
+        // 1) Image
+        if types.contains(.tiff) || types.contains(.png),
+           let image = NSImage(pasteboard: pb) {
+
+            let maxW: CGFloat = 240
+            let maxH: CGFloat = 160
+            let originalSize = image.size
+            let scale = min(maxW / originalSize.width, maxH / originalSize.height, 1.0)
+            let thumbW = originalSize.width * scale
+            let thumbH = originalSize.height * scale
+
+            let imageView = NSImageView(frame: NSRect(x: 12, y: 4, width: thumbW, height: thumbH))
+            imageView.image = image
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: maxW + 24, height: thumbH + 8))
+            container.addSubview(imageView)
+
+            let item = NSMenuItem()
+            item.view = container
+            menu.addItem(item)
+
+            let sizeLabel = NSMenuItem(
+                title: "  \(Int(originalSize.width)) × \(Int(originalSize.height))",
+                action: nil, keyEquivalent: ""
+            )
+            sizeLabel.isEnabled = false
+            menu.addItem(sizeLabel)
+            return
+        }
+
+        // 2) Text — fixed-size scrollable area
+        if let text = pb.string(forType: .string), !text.isEmpty {
+            let boxW: CGFloat = 260
+            let boxH: CGFloat = 160
+            let padding: CGFloat = 12
+            let displayText = text.count > 2000 ? String(text.prefix(2000)) + "…" : text
+
+            let scrollView = NSScrollView(frame: NSRect(x: padding, y: 4, width: boxW, height: boxH))
+            scrollView.hasVerticalScroller = true
+            scrollView.hasHorizontalScroller = false
+            scrollView.autohidesScrollers = true
+            scrollView.borderType = .noBorder
+
+            let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: boxW, height: boxH))
+            textView.isEditable = false
+            textView.isSelectable = true
+            textView.backgroundColor = .clear
+            textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+            textView.textColor = .labelColor
+            textView.textContainerInset = NSSize(width: 4, height: 4)
+            textView.textContainer?.widthTracksTextView = true
+            textView.textContainer?.containerSize = NSSize(width: boxW - 8, height: .greatestFiniteMagnitude)
+            textView.isVerticallyResizable = true
+            textView.isHorizontallyResizable = false
+            textView.string = displayText
+
+            scrollView.documentView = textView
+
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: boxW + padding * 2, height: boxH + 8))
+            container.addSubview(scrollView)
+
+            let item = NSMenuItem()
+            item.view = container
+            menu.addItem(item)
+
+            let countLabel = NSMenuItem(
+                title: "  " + String(format: L10n.str(.characters), text.count),
+                action: nil, keyEquivalent: ""
+            )
+            countLabel.isEnabled = false
+            menu.addItem(countLabel)
+            return
+        }
+
+        // 3) Empty
+        let emptyItem = NSMenuItem(
+            title: "  (\(L10n.str(.clipboardEmpty)))",
+            action: nil, keyEquivalent: ""
+        )
+        emptyItem.isEnabled = false
+        menu.addItem(emptyItem)
     }
 
     // MARK: – Badge（截图后 → 实心图标，剪贴板内容变化 → 空心图标）

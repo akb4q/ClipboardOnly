@@ -12,11 +12,14 @@ enum L10n {
         strings[lang]?[key] ?? strings["en"]![key] ?? key.rawValue
     }
 
+    static var isZH: Bool { lang == "zh" }
+
     enum Key: String {
         case appName, toggle, saveLocation, quit, launchAtLogin
         case shortcuts
         case notifCopied, notifNoFile, notifSaved
         case notifVideo, notifVideoMsg, notifError
+        case clipboardEmpty, characters
     }
 
     private static let strings: [String: [Key: String]] = [
@@ -33,6 +36,8 @@ enum L10n {
             .notifVideo:   "屏幕录像已保存",
             .notifVideoMsg:"视频无法复制到剪贴板，已保存到: %@",
             .notifError:   "截图处理出错",
+            .clipboardEmpty: "剪贴板为空",
+            .characters:   "%d 个字符",
         ],
         "en": [
             .appName:        "ClipboardOnly",
@@ -47,6 +52,8 @@ enum L10n {
             .notifVideo:   "Screen recording saved",
             .notifVideoMsg:"Video saved to: %@",
             .notifError:   "Screenshot processing error",
+            .clipboardEmpty: "Clipboard empty",
+            .characters:   "%d characters",
         ],
     ]
 }
