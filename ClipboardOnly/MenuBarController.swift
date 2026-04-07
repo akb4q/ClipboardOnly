@@ -2,6 +2,7 @@
 
 import AppKit
 import ServiceManagement
+import SwiftUI
 import UserNotifications
 
 @MainActor
@@ -20,14 +21,14 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     // MARK: – Private state
 
     private var statusItem: NSStatusItem!
-    private var hasBadge = false
 
     private let interceptDir: URL
     private let originalLocation: String
     private let originalTarget: String       // "clipboard", "file", "preview", etc.
     private var watcher: ScreenshotWatcher?
-    private var badgeChangeCount: Int = 0     // pasteboard changeCount when badge was shown
-    private var badgeTimer: Timer?
+    private var clipboardPollTimer: Timer?
+    private var lastChangeCount: Int = 0
+    private var clipboardChangedSinceLaunch = false
     private let shortcutArea:   String = "⌘⇧4"
     private let shortcutScreen: String = "⌘⇧3"
 
@@ -61,6 +62,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             Task { @MainActor [weak self] in self?.handleNewFile(url) }
         }
 
+        startClipboardPoll()
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
@@ -77,10 +80,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         rebuildMenu()
     }
 
-    /// 空心 = 正常，实心 = 剪贴板里有截图
     private func updateButton() {
-        let name = hasBadge ? "doc.on.clipboard.fill" : "doc.on.clipboard"
-        let img  = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        let img = NSImage(systemSymbolName: "paperclip", accessibilityDescription: nil)
         img?.isTemplate = true
         statusItem.button?.image        = img
         statusItem.button?.imageScaling = .scaleProportionallyDown
@@ -150,6 +151,16 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     // MARK: – Clipboard preview
 
     private func addClipboardPreview(to menu: NSMenu) {
+        guard clipboardChangedSinceLaunch else {
+            let emptyItem = NSMenuItem(
+                title: "  (\(L10n.str(.clipboardEmpty)))",
+                action: nil, keyEquivalent: ""
+            )
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
+            return
+        }
+
         let pb = NSPasteboard.general
         let types = pb.types ?? []
 
@@ -237,31 +248,53 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(emptyItem)
     }
 
-    // MARK: – Badge（截图后 → 实心图标，剪贴板内容变化 → 空心图标）
+    // MARK: – Clipboard bounce（剪贴板变化 → 图标 bounce 动画）
 
-    private func showBadge() {
-        hasBadge = true
-        updateButton()
-
-        // Poll pasteboard changeCount — when the user copies something new,
-        // the badge disappears (screenshot no longer in clipboard).
-        badgeChangeCount = NSPasteboard.general.changeCount
-        badgeTimer?.invalidate()
-        badgeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
-            [weak self] timer in
-            guard let self else { timer.invalidate(); return }
-            if NSPasteboard.general.changeCount != self.badgeChangeCount {
-                timer.invalidate()
-                Task { @MainActor in self.hideBadge() }
+    private func startClipboardPoll() {
+        lastChangeCount = NSPasteboard.general.changeCount
+        clipboardPollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let current = NSPasteboard.general.changeCount
+                if current != self.lastChangeCount {
+                    self.lastChangeCount = current
+                    self.clipboardChangedSinceLaunch = true
+                    self.bounceIcon()
+                }
             }
         }
     }
 
-    private func hideBadge() {
-        badgeTimer?.invalidate()
-        badgeTimer = nil
-        hasBadge = false
-        updateButton()
+    private var bounceHostingView: NSView?
+    @Published var bounceAnimating = false
+
+    private func bounceIcon() {
+        guard let button = statusItem.button else { return }
+        guard #available(macOS 26.0, *) else { return }
+
+        bounceHostingView?.removeFromSuperview()
+
+        bounceAnimating = false
+        let controller = self
+        let hostingView = NSHostingView(rootView: BounceSymbolView(controller: controller))
+        hostingView.frame = button.bounds
+        button.image = NSImage()
+        button.addSubview(hostingView)
+        bounceHostingView = hostingView
+
+        // Give SwiftUI time to render initial state before triggering
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            controller.bounceAnimating = true
+        }
+
+        // Restore after animation completes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            hostingView.removeFromSuperview()
+            self?.bounceHostingView = nil
+            self?.bounceAnimating = false
+            self?.updateButton()
+        }
     }
 
     // MARK: – File handling
@@ -295,7 +328,6 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     pb.writeObjects([item])
                 }
 
-                showBadge()
                 notify(L10n.str(.notifCopied), L10n.str(.notifNoFile))
             }
         } else {
@@ -335,6 +367,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     private func cleanup() {
         watcher?.stop()
+        clipboardPollTimer?.invalidate()
         NSStatusBar.system.removeStatusItem(statusItem)
         restoreLocation()
     }
@@ -393,6 +426,21 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: UUID().uuidString,
                                   content: content, trigger: nil))
+    }
+}
+
+// MARK: – SwiftUI bounce symbol view
+
+@available(macOS 26.0, *)
+private struct BounceSymbolView: View {
+    @ObservedObject var controller: MenuBarController
+
+    var body: some View {
+        Image(systemName: "paperclip")
+            .symbolEffect(.drawOn, options: .nonRepeating, isActive: controller.bounceAnimating)
+            .foregroundStyle(.primary)
+            .imageScale(.medium)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
