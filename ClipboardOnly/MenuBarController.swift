@@ -26,9 +26,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private let originalLocation: String
     private let originalTarget: String       // "clipboard", "file", "preview", etc.
     private var watcher: ScreenshotWatcher?
-    private var pasteMonitor: Any?
-    private var clipboardPollTimer: Timer?
-    private var lastChangeCount: Int = 0
+    private var badgeChangeCount: Int = 0     // pasteboard changeCount when badge was shown
+    private var badgeTimer: Timer?
     private let shortcutArea:   String = "⌘⇧4"
     private let shortcutScreen: String = "⌘⇧3"
 
@@ -61,9 +60,6 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         watcher = ScreenshotWatcher(watchDir: interceptDir) { [weak self] url in
             Task { @MainActor [weak self] in self?.handleNewFile(url) }
         }
-
-        requestAccessibilityAndStartPasteMonitor()
-        startClipboardPoll()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
@@ -241,64 +237,31 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         menu.addItem(emptyItem)
     }
 
-    // MARK: – Badge（截图后 → 实心图标，⌘V 粘贴后 → 空心图标）
-
-    /// Poll clipboard — any change → badge on.
-    private func startClipboardPoll() {
-        lastChangeCount = NSPasteboard.general.changeCount
-        clipboardPollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
-            [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let current = NSPasteboard.general.changeCount
-                if current != self.lastChangeCount {
-                    self.lastChangeCount = current
-                    self.showBadge()
-                }
-            }
-        }
-    }
+    // MARK: – Badge（截图后 → 实心图标，剪贴板内容变化 → 空心图标）
 
     private func showBadge() {
         hasBadge = true
         updateButton()
+
+        // Poll pasteboard changeCount — when the user copies something new,
+        // the badge disappears (screenshot no longer in clipboard).
+        badgeChangeCount = NSPasteboard.general.changeCount
+        badgeTimer?.invalidate()
+        badgeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) {
+            [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            if NSPasteboard.general.changeCount != self.badgeChangeCount {
+                timer.invalidate()
+                Task { @MainActor in self.hideBadge() }
+            }
+        }
     }
 
     private func hideBadge() {
+        badgeTimer?.invalidate()
+        badgeTimer = nil
         hasBadge = false
         updateButton()
-    }
-
-    // MARK: – ⌘V paste monitor (requires Accessibility permission)
-
-    private func requestAccessibilityAndStartPasteMonitor() {
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        if AXIsProcessTrustedWithOptions(opts) {
-            startPasteMonitor()
-        } else {
-            Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) {
-                [weak self] timer in
-                if AXIsProcessTrusted() {
-                    timer.invalidate()
-                    Task { @MainActor [weak self] in
-                        self?.startPasteMonitor()
-                    }
-                }
-            }
-        }
-    }
-
-    private func startPasteMonitor() {
-        guard pasteMonitor == nil else { return }
-        pasteMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
-            [weak self] event in
-            if event.modifierFlags.contains(.command),
-               event.charactersIgnoringModifiers == "v" {
-                Task { @MainActor [weak self] in
-                    self?.hideBadge()
-                }
-            }
-        }
     }
 
     // MARK: – File handling
@@ -372,11 +335,6 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     private func cleanup() {
         watcher?.stop()
-        clipboardPollTimer?.invalidate()
-        if let monitor = pasteMonitor {
-            NSEvent.removeMonitor(monitor)
-            pasteMonitor = nil
-        }
         NSStatusBar.system.removeStatusItem(statusItem)
         restoreLocation()
     }
