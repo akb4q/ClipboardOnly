@@ -4,6 +4,7 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 import UserNotifications
+import Vision
 
 @MainActor
 final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
@@ -13,6 +14,14 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             UserDefaults.standard.set(clipboardMode, forKey: "clipboardMode")
             setThumbnailVisible(!clipboardMode)
             updateButton()
+            DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
+        }
+    }
+    @Published var autoOCREnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(autoOCREnabled, forKey: "autoOCREnabled")
+            if !autoOCREnabled { resetOCRState() }
+            dismissManualOCRPanel()
             DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
         }
     }
@@ -29,6 +38,14 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private var clipboardPollTimer: Timer?
     private var lastChangeCount: Int = 0
     private var clipboardChangedSinceLaunch = false
+    private var lastOCRText: String?
+    private var ocrChangeCount: Int = 0
+    private var ocrInFlightChangeCount: Int?
+    private var manualOCRImage: NSImage?
+    private var manualOCRChangeCount: Int?
+    private var manualOCRPanelController: OCRQuickActionPanelController?
+    private var pasteEventMonitor: Any?
+    private var manualOCRClickMonitor: Any?
     private let shortcutArea:   String = "⌘⇧4"
     private let shortcutScreen: String = "⌘⇧3"
 
@@ -45,6 +62,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         originalTarget   = UserDefaults(suiteName: Self.screencaptureDomain)?
             .string(forKey: "target") ?? "file"
         clipboardMode    = UserDefaults.standard.bool(forKey: "clipboardMode")
+        autoOCREnabled   = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
 
         let saved = originalLocation == Self.interceptPath.path
             ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
@@ -63,12 +81,22 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
 
         startClipboardPoll()
+        startPasteEventMonitor()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.cleanup() }
+        }
+    }
+
+    deinit {
+        if let pasteEventMonitor {
+            NSEvent.removeMonitor(pasteEventMonitor)
+        }
+        if let manualOCRClickMonitor {
+            NSEvent.removeMonitor(manualOCRClickMonitor)
         }
     }
 
@@ -110,6 +138,15 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         )
         shortcutInfo.isEnabled = false
         menu.addItem(shortcutInfo)
+
+        let autoOCRItem = NSMenuItem(
+            title: L10n.str(.autoOCR),
+            action: #selector(toggleAutoOCR),
+            keyEquivalent: ""
+        )
+        autoOCRItem.state = autoOCREnabled ? .on : .off
+        autoOCRItem.target = self
+        menu.addItem(autoOCRItem)
 
         menu.addItem(.separator())
 
@@ -192,6 +229,47 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             )
             sizeLabel.isEnabled = false
             menu.addItem(sizeLabel)
+
+            let currentCC = pb.changeCount
+            if autoOCREnabled {
+                menu.addItem(.separator())
+
+                if ocrInFlightChangeCount == currentCC && lastOCRText == nil {
+                    let loadingItem = NSMenuItem(
+                        title: "  " + L10n.str(.ocrRecognizing),
+                        action: nil,
+                        keyEquivalent: ""
+                    )
+                    loadingItem.isEnabled = false
+                    menu.addItem(loadingItem)
+                } else if ocrChangeCount == currentCC {
+                    if let ocrText = lastOCRText, !ocrText.isEmpty {
+                        let ocrHeader = NSMenuItem(
+                            title: "  📝 " + L10n.str(.ocrCopyHint),
+                            action: #selector(copyOCRText),
+                            keyEquivalent: ""
+                        )
+                        ocrHeader.target = self
+                        menu.addItem(ocrHeader)
+
+                        let preview = ocrText.count > 200 ? String(ocrText.prefix(200)) + "…" : ocrText
+                        let lines = preview.components(separatedBy: .newlines).prefix(4)
+                        for line in lines where !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                            let lineItem = NSMenuItem(title: "    " + line, action: nil, keyEquivalent: "")
+                            lineItem.isEnabled = false
+                            menu.addItem(lineItem)
+                        }
+                    } else {
+                        let emptyOCRItem = NSMenuItem(
+                            title: "  " + L10n.str(.ocrEmpty),
+                            action: nil,
+                            keyEquivalent: ""
+                        )
+                        emptyOCRItem.isEnabled = false
+                        menu.addItem(emptyOCRItem)
+                    }
+                }
+            }
             return
         }
 
@@ -260,10 +338,244 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 if current != self.lastChangeCount {
                     self.lastChangeCount = current
                     self.clipboardChangedSinceLaunch = true
+                    if self.ocrInFlightChangeCount != current && self.ocrChangeCount != current {
+                        self.resetOCRState()
+                    }
+                    if self.manualOCRChangeCount != current {
+                        self.dismissManualOCRPanel()
+                    }
                     self.bounceIcon()
                 }
             }
         }
+    }
+
+    private func startPasteEventMonitor() {
+        pasteEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let isPasteShortcut =
+                event.modifierFlags.contains(.command) &&
+                (event.keyCode == 9 || event.charactersIgnoringModifiers?.lowercased() == "v")
+            guard isPasteShortcut else { return }
+
+            Task { @MainActor [weak self] in
+                guard let self, self.manualOCRPanelController != nil else { return }
+                self.dismissManualOCRPanel()
+            }
+        }
+
+        manualOCRClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.manualOCRPanelController != nil else { return }
+                self.dismissManualOCRPanel()
+            }
+        }
+    }
+
+    // MARK: – OCR (Vision framework)
+
+    private func performOCR(on image: NSImage, completion: @escaping (String?) -> Void) {
+        guard let tiffData = image.tiffRepresentation,
+              let cgImage = NSBitmapImageRep(data: tiffData)?.cgImage else {
+            completion(nil)
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let request = VNRecognizeTextRequest { request, error in
+                guard error == nil,
+                      let observations = request.results as? [VNRecognizedTextObservation] else {
+                    completion(nil)
+                    return
+                }
+                let text = observations.compactMap { $0.topCandidates(1).first?.string }
+                    .joined(separator: "\n")
+                completion(text.isEmpty ? nil : text)
+            }
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+            request.usesLanguageCorrection = true
+
+            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+            try? handler.perform([request])
+        }
+    }
+
+    private func refreshMenuDisplay() {
+        guard let menu = statusItem.menu else {
+            rebuildMenu()
+            return
+        }
+
+        menu.removeAllItems()
+        populateMenu(menu)
+    }
+
+    private func resetOCRState() {
+        lastOCRText = nil
+        ocrChangeCount = 0
+        ocrInFlightChangeCount = nil
+    }
+
+    private func writeImageToClipboard(_ image: NSImage, recognizedText: String? = nil) -> Int? {
+        guard let tiffData = image.tiffRepresentation else { return nil }
+
+        let item = NSPasteboardItem()
+        item.setData(tiffData, forType: .tiff)
+        if let rep = NSBitmapImageRep(data: tiffData),
+           let pngData = rep.representation(using: .png, properties: [:]) {
+            item.setData(pngData, forType: .png)
+        }
+        if let recognizedText, !recognizedText.isEmpty {
+            item.setString(recognizedText, forType: .string)
+        }
+
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        guard pb.writeObjects([item]) else { return nil }
+        return pb.changeCount
+    }
+
+    private func writeTextToClipboard(_ text: String) -> Int? {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        guard pb.setString(text, forType: .string) else { return nil }
+        return pb.changeCount
+    }
+
+    private func showManualOCRPanel(for image: NSImage, changeCount: Int) {
+        manualOCRImage = image
+        manualOCRChangeCount = changeCount
+
+        if manualOCRPanelController == nil {
+            manualOCRPanelController = OCRQuickActionPanelController(controller: self)
+        }
+        manualOCRPanelController?.show()
+    }
+
+    private func dismissManualOCRPanel() {
+        manualOCRImage = nil
+        manualOCRChangeCount = nil
+        manualOCRPanelController?.close()
+        manualOCRPanelController = nil
+    }
+
+    fileprivate var manualOCRThumbnail: NSImage? { manualOCRImage }
+
+    fileprivate func manualOCRButtonTitle() -> String {
+        if let current = manualOCRChangeCount, current == ocrInFlightChangeCount {
+            return L10n.str(.ocrQuickActionBusy)
+        }
+        if let current = manualOCRChangeCount, current == ocrChangeCount, lastOCRText != nil {
+            return L10n.str(.ocrQuickActionDone)
+        }
+        return L10n.str(.ocrQuickAction)
+    }
+
+    fileprivate func manualOCRPreviewText() -> String? {
+        guard let current = manualOCRChangeCount,
+              current == ocrChangeCount,
+              let lastOCRText,
+              !lastOCRText.isEmpty else { return nil }
+
+        let collapsed = lastOCRText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "  ")
+        guard !collapsed.isEmpty else { return nil }
+        return collapsed.count > 54 ? String(collapsed.prefix(54)) + "…" : collapsed
+    }
+
+    fileprivate func triggerManualOCR() {
+        guard let image = manualOCRImage, let changeCount = manualOCRChangeCount else { return }
+        guard ocrInFlightChangeCount != changeCount else { return }
+
+        lastOCRText = nil
+        ocrInFlightChangeCount = changeCount
+        manualOCRPanelController?.refresh()
+        refreshMenuDisplay()
+
+        performOCR(on: image) { [weak self] text in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.ocrInFlightChangeCount == changeCount else { return }
+
+                let normalizedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.ocrInFlightChangeCount = nil
+
+                let pb = NSPasteboard.general
+                guard pb.changeCount == changeCount else {
+                    self.resetOCRState()
+                    self.dismissManualOCRPanel()
+                    self.refreshMenuDisplay()
+                    return
+                }
+
+                if let normalizedText, !normalizedText.isEmpty,
+                   let newChangeCount = self.writeTextToClipboard(normalizedText) {
+                    self.lastChangeCount = newChangeCount
+                    self.ocrChangeCount = newChangeCount
+                    self.lastOCRText = normalizedText
+                    self.manualOCRChangeCount = newChangeCount
+                    self.manualOCRPanelController?.refresh()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                        self?.dismissManualOCRPanel()
+                    }
+                } else {
+                    self.ocrChangeCount = changeCount
+                    self.lastOCRText = nil
+                    self.manualOCRPanelController?.refresh()
+                }
+
+                self.refreshMenuDisplay()
+            }
+        }
+    }
+
+    private func startOCRForClipboardImage(_ image: NSImage, sourceChangeCount: Int) {
+        guard autoOCREnabled else { return }
+
+        lastOCRText = nil
+        ocrInFlightChangeCount = sourceChangeCount
+        refreshMenuDisplay()
+
+        performOCR(on: image) { [weak self] text in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.ocrInFlightChangeCount == sourceChangeCount else { return }
+
+                let normalizedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.ocrInFlightChangeCount = nil
+
+                let pb = NSPasteboard.general
+                guard pb.changeCount == sourceChangeCount else {
+                    self.resetOCRState()
+                    self.refreshMenuDisplay()
+                    return
+                }
+
+                if let normalizedText, !normalizedText.isEmpty,
+                   let newChangeCount = self.writeTextToClipboard(normalizedText) {
+                    self.lastChangeCount = newChangeCount
+                    self.ocrChangeCount = newChangeCount
+                    self.lastOCRText = normalizedText
+                } else {
+                    self.ocrChangeCount = sourceChangeCount
+                    self.lastOCRText = nil
+                }
+
+                self.refreshMenuDisplay()
+            }
+        }
+    }
+
+    @objc private func copyOCRText() {
+        guard let text = lastOCRText, !text.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
     }
 
     private var bounceHostingView: NSView?
@@ -312,20 +624,22 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                        String(format: L10n.str(.notifVideoMsg), url.lastPathComponent))
             } else {
                 guard let image = NSImage(contentsOf: url) else { return }
+                guard let newChangeCount = writeImageToClipboard(image) else {
+                    notify(L10n.str(.notifError), L10n.str(.notifNoFile))
+                    return
+                }
+
                 try? FileManager.default.removeItem(at: url)
 
-                // Write image data eagerly (not lazily) so Universal Clipboard
-                // (Handoff to iPhone/iPad) works correctly.
-                let pb = NSPasteboard.general
-                pb.clearContents()
-                if let tiffData = image.tiffRepresentation {
-                    let item = NSPasteboardItem()
-                    item.setData(tiffData, forType: .tiff)
-                    if let rep = NSBitmapImageRep(data: tiffData),
-                       let pngData = rep.representation(using: .png, properties: [:]) {
-                        item.setData(pngData, forType: .png)
-                    }
-                    pb.writeObjects([item])
+                clipboardChangedSinceLaunch = true
+                lastChangeCount = newChangeCount
+                if autoOCREnabled {
+                    dismissManualOCRPanel()
+                    startOCRForClipboardImage(image, sourceChangeCount: newChangeCount)
+                } else {
+                    resetOCRState()
+                    showManualOCRPanel(for: image, changeCount: newChangeCount)
+                    refreshMenuDisplay()
                 }
 
                 notify(L10n.str(.notifCopied), L10n.str(.notifNoFile))
@@ -340,6 +654,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     // MARK: – ObjC actions
 
     @objc private func toggleMode()   { clipboardMode.toggle() }
+    @objc private func toggleAutoOCR() { autoOCREnabled.toggle() }
     @objc private func quitApp()      { quit() }
     // MARK: – Launch at Login
 
@@ -368,6 +683,15 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private func cleanup() {
         watcher?.stop()
         clipboardPollTimer?.invalidate()
+        if let pasteEventMonitor {
+            NSEvent.removeMonitor(pasteEventMonitor)
+            self.pasteEventMonitor = nil
+        }
+        if let manualOCRClickMonitor {
+            NSEvent.removeMonitor(manualOCRClickMonitor)
+            self.manualOCRClickMonitor = nil
+        }
+        dismissManualOCRPanel()
         NSStatusBar.system.removeStatusItem(statusItem)
         restoreLocation()
     }
@@ -444,3 +768,119 @@ private struct BounceSymbolView: View {
     }
 }
 
+private final class OCRQuickActionPanelController: NSObject {
+    private let controller: MenuBarController
+    private let panel: NSPanel
+    private let hostingView: NSHostingView<OCRQuickActionView>
+
+    init(controller: MenuBarController) {
+        self.controller = controller
+        self.panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 250, height: 154),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        self.hostingView = NSHostingView(rootView: OCRQuickActionView(controller: controller))
+        super.init()
+
+        panel.isFloatingPanel = true
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+        panel.contentView = hostingView
+    }
+
+    func show() {
+        refresh()
+        positionPanel()
+        panel.orderFrontRegardless()
+    }
+
+    func refresh() {
+        hostingView.rootView = OCRQuickActionView(controller: controller)
+    }
+
+    func close() {
+        panel.orderOut(nil)
+    }
+
+    private func positionPanel() {
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+        let frame = screen.visibleFrame
+        let size = panel.frame.size
+        let x = frame.maxX - size.width - 28
+        let y = frame.minY + 28
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+}
+
+private struct OCRQuickActionView: View {
+    let controller: MenuBarController
+
+    var body: some View {
+        Button(action: controller.triggerManualOCR) {
+            ZStack(alignment: .bottomTrailing) {
+                if let preview = controller.manualOCRPreviewText() {
+                    ZStack(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primary.opacity(0.07))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                            )
+                            .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
+
+                        Text(preview)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.82))
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+                } else {
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: 74)
+                }
+
+                Image(systemName: "text.viewfinder")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.7))
+            }
+            .padding(14)
+            .frame(width: 250)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(.regularMaterial)
+                    if let thumbnail = controller.manualOCRThumbnail {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 160, height: 90)
+                            .cornerRadius(8)
+                            .opacity(0.35)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(controller.manualOCRButtonTitle() == L10n.str(.ocrQuickActionBusy))
+    }
+}

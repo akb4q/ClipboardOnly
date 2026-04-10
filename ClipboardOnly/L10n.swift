@@ -17,6 +17,8 @@ enum L10n {
     enum Key: String {
         case appName, toggle, saveLocation, quit, launchAtLogin
         case shortcuts
+        case autoOCR, ocrSection, ocrCopyHint, ocrRecognizing, ocrEmpty
+        case ocrQuickAction, ocrQuickActionBusy, ocrQuickActionDone
         case notifCopied, notifNoFile, notifSaved
         case notifVideo, notifVideoMsg, notifError
         case clipboardEmpty, characters
@@ -29,6 +31,14 @@ enum L10n {
             .saveLocation:   "保存位置: %@",
             .launchAtLogin:  "开机自启动",
             .shortcuts:      "截图快捷键：%@  /  %@",
+            .autoOCR:        "自动 OCR 识别截图并复制文字",
+            .ocrSection:     "识别文字",
+            .ocrCopyHint:    "识别文字（点击复制）",
+            .ocrRecognizing: "正在识别图片文字…",
+            .ocrEmpty:       "未识别到文字",
+            .ocrQuickAction: "OCR 当前截图",
+            .ocrQuickActionBusy: "正在 OCR…",
+            .ocrQuickActionDone: "已复制文字",
             .quit:           "退出",
             .notifCopied:  "截图已复制到剪贴板",
             .notifNoFile:  "文件未保存",
@@ -45,6 +55,14 @@ enum L10n {
             .saveLocation:   "Save to: %@",
             .launchAtLogin:  "Launch at Login",
             .shortcuts:      "Shortcuts: %@  /  %@",
+            .autoOCR:        "Auto OCR for screenshots && copy",
+            .ocrSection:     "OCR Text",
+            .ocrCopyHint:    "OCR Text (click to copy)",
+            .ocrRecognizing: "Recognizing text from image…",
+            .ocrEmpty:       "No text detected",
+            .ocrQuickAction: "OCR This Screenshot",
+            .ocrQuickActionBusy: "Running OCR…",
+            .ocrQuickActionDone: "Text copied",
             .quit:           "Quit",
             .notifCopied:  "Screenshot copied to clipboard",
             .notifNoFile:  "No file was saved",
