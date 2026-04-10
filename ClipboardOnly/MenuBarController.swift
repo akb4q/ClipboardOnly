@@ -727,20 +727,21 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 }
 
 
+@MainActor
 private final class OCRQuickActionPanelController: NSObject {
     private let controller: MenuBarController
     private let panel: NSPanel
-    private let hostingView: NSHostingView<OCRQuickActionView>
+    private let contentView: OCRThumbnailView
 
     init(controller: MenuBarController) {
         self.controller = controller
+        self.contentView = OCRThumbnailView()
         self.panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 250, height: 154),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        self.hostingView = NSHostingView(rootView: OCRQuickActionView(controller: controller))
         super.init()
 
         panel.isFloatingPanel = true
@@ -750,96 +751,122 @@ private final class OCRQuickActionPanelController: NSObject {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        panel.contentView = hostingView
+        panel.contentView = contentView
+        contentView.onTap = { [weak controller] in controller?.triggerManualOCR() }
     }
 
     func show() {
-        refresh()
+        let img = controller.manualOCRThumbnail
+        contentView.setImage(img)
+
+        // Compute panel size from image, capping at maxW×maxH, never upscaling
+        let maxW: CGFloat = 250
+        let maxH: CGFloat = 200
+        let panelSize: NSSize
+        if let img, img.size.width > 0 {
+            let scale = min(maxW / img.size.width, maxH / img.size.height, 1.0)
+            panelSize = NSSize(width: img.size.width * scale, height: img.size.height * scale)
+        } else {
+            panelSize = NSSize(width: maxW, height: 141)
+        }
+        panel.setContentSize(panelSize)
+        contentView.frame = NSRect(origin: .zero, size: panelSize)
+
         positionPanel()
+        let targetFrame = panel.frame
+        var startFrame = targetFrame
+        startFrame.origin.x += targetFrame.width + 40
+        panel.setFrame(startFrame, display: false)
         panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.28
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            self.panel.animator().setFrame(targetFrame, display: true)
+        }
     }
 
     func refresh() {
-        hostingView.rootView = OCRQuickActionView(controller: controller)
+        contentView.setImage(controller.manualOCRThumbnail)
     }
 
     func close() {
-        panel.orderOut(nil)
+        let currentFrame = panel.frame
+        var endFrame = currentFrame
+        endFrame.origin.x += currentFrame.width + 40
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            self.panel.animator().setFrame(endFrame, display: true)
+        }, completionHandler: { [weak self] in
+            self?.panel.orderOut(nil)
+            self?.panel.setFrame(currentFrame, display: false)
+        })
     }
 
     private func positionPanel() {
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLocation, $0.frame, false) })
-            ?? NSScreen.main
-            ?? NSScreen.screens.first
+            ?? NSScreen.main ?? NSScreen.screens.first
         guard let screen else { return }
         let frame = screen.visibleFrame
         let size = panel.frame.size
-        let x = frame.maxX - size.width - 28
-        let y = frame.minY + 28
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.setFrameOrigin(NSPoint(x: frame.maxX - size.width - 28, y: frame.minY + 28))
     }
 }
 
-private struct OCRQuickActionView: View {
-    let controller: MenuBarController
+/// Pure-AppKit thumbnail view — no SwiftUI, no constraint conflicts.
+private final class OCRThumbnailView: NSView {
+    var onTap: (() -> Void)?
 
-    var body: some View {
-        Button(action: controller.triggerManualOCR) {
-            ZStack(alignment: .bottomTrailing) {
-                if let preview = controller.manualOCRPreviewText() {
-                    ZStack(alignment: .topLeading) {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.primary.opacity(0.07))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                            )
-                            .shadow(color: .black.opacity(0.10), radius: 10, y: 4)
+    private let imageView = NSImageView()
+    private let iconView = NSImageView()
 
-                        Text(preview)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.secondary.opacity(0.82))
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
-                } else {
-                    Color.clear
-                        .frame(maxWidth: .infinity, minHeight: 74)
-                }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 14
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
 
-                Image(systemName: "text.viewfinder")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.secondary.opacity(0.7))
-            }
-            .padding(14)
-            .frame(width: 250)
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(.regularMaterial)
-                    if let thumbnail = controller.manualOCRThumbnail {
-                        Image(nsImage: thumbnail)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 160, height: 90)
-                            .cornerRadius(8)
-                            .opacity(0.35)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(controller.manualOCRButtonTitle() == L10n.str(.ocrQuickActionBusy))
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.autoresizingMask = [.width, .height]
+        addSubview(imageView)
+
+        let cfg = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        iconView.image = NSImage(systemSymbolName: "text.viewfinder", accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg)
+        iconView.contentTintColor = .white
+        iconView.imageScaling = .scaleNone
+        iconView.shadow = {
+            let s = NSShadow()
+            s.shadowColor = NSColor.black.withAlphaComponent(0.55)
+            s.shadowBlurRadius = 4
+            s.shadowOffset = .zero
+            return s
+        }()
+        iconView.autoresizingMask = [.minXMargin, .maxYMargin]
+        addSubview(iconView)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func setImage(_ image: NSImage?) {
+        imageView.image = image
+    }
+
+    override func layout() {
+        super.layout()
+        imageView.frame = bounds
+        let iconSize: CGFloat = 28
+        let margin: CGFloat = 8
+        iconView.frame = NSRect(
+            x: bounds.maxX - iconSize - margin,
+            y: bounds.minY + margin,
+            width: iconSize, height: iconSize
+        )
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onTap?()
     }
 }
