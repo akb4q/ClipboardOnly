@@ -1,4 +1,4 @@
-**ClipBoardOnly**
+**ClipboardOnly**
 is a Screenshot Utility for Mac.
 A small tool born from a simple frustration: every screenshot automatically creates a file you didn't ask for. This utility gives you back control — choose whether to save a file at all, and optionally run OCR on whatever you've captured.
 
