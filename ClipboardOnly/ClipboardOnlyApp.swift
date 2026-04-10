@@ -7,7 +7,6 @@ import AppKit
 @main
 struct ClipboardOnlyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var controller = MenuBarController()
 
     var body: some Scene {
         Settings { EmptyView() }
@@ -15,8 +14,13 @@ struct ClipboardOnlyApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    // Strong reference ensures the status item is created and stays alive.
+    private var controller: MenuBarController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminatePreviousInstances()
+        // Create after launch so NSStatusBar is fully ready.
+        controller = MenuBarController()
     }
 
     private func terminatePreviousInstances() {
