@@ -578,35 +578,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         pb.setString(text, forType: .string)
     }
 
-    private var bounceHostingView: NSView?
-    @Published var bounceAnimating = false
-
     private func bounceIcon() {
-        guard let button = statusItem.button else { return }
-        guard #available(macOS 26.0, *) else { return }
-
-        bounceHostingView?.removeFromSuperview()
-
-        bounceAnimating = false
-        let controller = self
-        let hostingView = NSHostingView(rootView: BounceSymbolView(controller: controller))
-        hostingView.frame = button.bounds
-        button.image = NSImage()
-        button.addSubview(hostingView)
-        bounceHostingView = hostingView
-
-        // Give SwiftUI time to render initial state before triggering
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            controller.bounceAnimating = true
-        }
-
-        // Restore after animation completes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            hostingView.removeFromSuperview()
-            self?.bounceHostingView = nil
-            self?.bounceAnimating = false
-            self?.updateButton()
-        }
+        // Animation removed; icon stays static.
     }
 
     // MARK: – File handling
@@ -753,20 +726,6 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 }
 
-// MARK: – SwiftUI bounce symbol view
-
-@available(macOS 26.0, *)
-private struct BounceSymbolView: View {
-    @ObservedObject var controller: MenuBarController
-
-    var body: some View {
-        Image(systemName: "paperclip")
-            .symbolEffect(.drawOn, options: .nonRepeating, isActive: controller.bounceAnimating)
-            .foregroundStyle(.primary)
-            .imageScale(.medium)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
 
 private final class OCRQuickActionPanelController: NSObject {
     private let controller: MenuBarController
