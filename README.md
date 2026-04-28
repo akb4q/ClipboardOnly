@@ -26,7 +26,30 @@ A small tool born from a simple frustration: every screenshot automatically crea
 
 Grab the latest `.zip` from the [Releases](https://github.com/akb4q/ClipboardOnly/releases) page, unzip, and drag `ClipboardOnly.app` into `/Applications`.
 
-> First launch may need right-click → Open to bypass Gatekeeper.
+### First launch — bypassing Gatekeeper
+
+Because the app is not signed with an Apple Developer ID, macOS will block it on first launch with a *"Apple could not verify… is free of malware"* dialog. Choose **either** workaround:
+
+**Option A — Terminal (one line):**
+
+```bash
+xattr -cr /Applications/ClipboardOnly.app
+```
+
+Then double-click the app normally.
+
+**Option B — System Settings:**
+
+1. Try to open the app once (you'll get the block dialog — click **Done**).
+2. Open **System Settings → Privacy & Security**.
+3. Scroll to the bottom; you'll see *"ClipboardOnly was blocked…"* — click **Open Anyway**.
+4. Confirm with your password / Touch ID.
+
+> 由于 app 未经 Apple Developer ID 签名，首次运行会被 Gatekeeper 拦截。任选一种解决方式：
+>
+> **方式 A — 终端一行命令：** `xattr -cr /Applications/ClipboardOnly.app`，然后正常双击。
+>
+> **方式 B — 系统设置：** 先双击触发拦截弹窗 → 打开「系统设置 → 隐私与安全性」→ 滚到底部点「仍要打开」→ 输入密码确认。
 
 ## Contributors
 
