@@ -6,6 +6,16 @@ import SwiftUI
 import UserNotifications
 import Vision
 
+private final class ClickableMenuItemView: NSView {
+    weak var target: AnyObject?
+    var action: Selector?
+
+    override func mouseDown(with event: NSEvent) {
+        guard let target, let action else { return }
+        NSApp.sendAction(action, to: target, from: self)
+    }
+}
+
 @MainActor
 final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
@@ -25,11 +35,23 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
         }
     }
+    @Published var privacyFilterEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(privacyFilterEnabled, forKey: "privacyFilterEnabled")
+            if !suppressMenuRebuild {
+                DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
+            }
+        }
+    }
     @Published private(set) var saveDirectory: URL
 
     // MARK: – Private state
 
     private var statusItem: NSStatusItem!
+    private var privacyFilter: PrivacyFilter = .loadFromDefaults()
+    private var masker: ImagePrivacyMasker = ImagePrivacyMasker()
+    private var suppressMenuRebuild = false
+    private var privacyFilterExpanded = false
 
     private let interceptDir: URL
     private let originalLocation: String
@@ -61,8 +83,9 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         originalLocation = Self.readScreenshotLocation()
         originalTarget   = UserDefaults(suiteName: Self.screencaptureDomain)?
             .string(forKey: "target") ?? "file"
-        clipboardMode    = UserDefaults.standard.bool(forKey: "clipboardMode")
-        autoOCREnabled   = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
+        clipboardMode          = UserDefaults.standard.bool(forKey: "clipboardMode")
+        autoOCREnabled         = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
+        privacyFilterEnabled   = UserDefaults.standard.bool(forKey: "privacyFilterEnabled")
 
         let saved = originalLocation == Self.interceptPath.path
             ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
@@ -70,6 +93,9 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         saveDirectory = saved
 
         super.init()
+
+        privacyFilter = .loadFromDefaults()
+        masker = ImagePrivacyMasker(filter: privacyFilter)
 
         setupInterceptDir()
         setScreenshotLocation(interceptDir.path)
@@ -147,6 +173,18 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         autoOCRItem.state = autoOCREnabled ? .on : .off
         autoOCRItem.target = self
         menu.addItem(autoOCRItem)
+
+        menu.addItem(makePrivacyDisclosureItem())
+        if privacyFilterExpanded {
+            menu.addItem(makePrivacyEnabledItem())
+            menu.addItem(makePrivacySubItem(.privacyFilterAPIKey,     type: .apiKey))
+            menu.addItem(makePrivacySubItem(.privacyFilterCreditCard, type: .creditCard))
+            menu.addItem(makePrivacySubItem(.privacyFilterEmail,      type: .email))
+            menu.addItem(makePrivacySubItem(.privacyFilterPhone,      type: .phone))
+            menu.addItem(makePrivacySubItem(.privacyFilterIDCard,     type: .idCard))
+            menu.addItem(makePrivacySubItem(.privacyFilterIP,         type: .ipAddress))
+            menu.addItem(makePrivacySubItem(.privacyFilterPassword,   type: .password))
+        }
 
         menu.addItem(.separator())
 
@@ -513,15 +551,19 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     return
                 }
 
-                if let normalizedText, !normalizedText.isEmpty,
-                   let newChangeCount = self.writeTextToClipboard(normalizedText) {
-                    self.lastChangeCount = newChangeCount
-                    self.ocrChangeCount = newChangeCount
-                    self.lastOCRText = normalizedText
-                    self.manualOCRChangeCount = newChangeCount
-                    self.manualOCRPanelController?.refresh()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
-                        self?.dismissManualOCRPanel()
+                if let normalizedText, !normalizedText.isEmpty {
+                    let finalText = self.privacyFilterEnabled
+                        ? self.privacyFilter.filter(normalizedText).output
+                        : normalizedText
+                    if let newChangeCount = self.writeTextToClipboard(finalText) {
+                        self.lastChangeCount = newChangeCount
+                        self.ocrChangeCount = newChangeCount
+                        self.lastOCRText = finalText
+                        self.manualOCRChangeCount = newChangeCount
+                        self.manualOCRPanelController?.refresh()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                            self?.dismissManualOCRPanel()
+                        }
                     }
                 } else {
                     self.ocrChangeCount = changeCount
@@ -556,11 +598,15 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     return
                 }
 
-                if let normalizedText, !normalizedText.isEmpty,
-                   let newChangeCount = self.writeTextToClipboard(normalizedText) {
-                    self.lastChangeCount = newChangeCount
-                    self.ocrChangeCount = newChangeCount
-                    self.lastOCRText = normalizedText
+                if let normalizedText, !normalizedText.isEmpty {
+                    let finalText = self.privacyFilterEnabled
+                        ? self.privacyFilter.filter(normalizedText).output
+                        : normalizedText
+                    if let newChangeCount = self.writeTextToClipboard(finalText) {
+                        self.lastChangeCount = newChangeCount
+                        self.ocrChangeCount = newChangeCount
+                        self.lastOCRText = finalText
+                    }
                 } else {
                     self.ocrChangeCount = sourceChangeCount
                     self.lastOCRText = nil
@@ -597,25 +643,22 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                        String(format: L10n.str(.notifVideoMsg), url.lastPathComponent))
             } else {
                 guard let image = NSImage(contentsOf: url) else { return }
-                guard let newChangeCount = writeImageToClipboard(image) else {
-                    notify(L10n.str(.notifError), L10n.str(.notifNoFile))
-                    return
-                }
-
                 try? FileManager.default.removeItem(at: url)
 
-                clipboardChangedSinceLaunch = true
-                lastChangeCount = newChangeCount
-                if autoOCREnabled {
-                    dismissManualOCRPanel()
-                    startOCRForClipboardImage(image, sourceChangeCount: newChangeCount)
+                if privacyFilterEnabled {
+                    masker.mask(image) { [weak self] maskedImage in
+                        guard let self else { return }
+                        guard let maskedImage else {
+                            // Fail closed: do NOT fall back to the unmasked image,
+                            // since that would defeat the privacy guarantee.
+                            self.notify(L10n.str(.notifError), L10n.str(.notifNoFile))
+                            return
+                        }
+                        self.writeAndHandleImage(maskedImage)
+                    }
                 } else {
-                    resetOCRState()
-                    showManualOCRPanel(for: image, changeCount: newChangeCount)
-                    refreshMenuDisplay()
+                    writeAndHandleImage(image)
                 }
-
-                notify(L10n.str(.notifCopied), L10n.str(.notifNoFile))
             }
         } else {
             let dest = saveDirectory.appendingPathComponent(url.lastPathComponent)
@@ -624,11 +667,159 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    private func writeAndHandleImage(_ image: NSImage) {
+        guard let newChangeCount = writeImageToClipboard(image) else {
+            notify(L10n.str(.notifError), L10n.str(.notifNoFile))
+            return
+        }
+        clipboardChangedSinceLaunch = true
+        lastChangeCount = newChangeCount
+        if autoOCREnabled {
+            dismissManualOCRPanel()
+            startOCRForClipboardImage(image, sourceChangeCount: newChangeCount)
+        } else {
+            resetOCRState()
+            showManualOCRPanel(for: image, changeCount: newChangeCount)
+            refreshMenuDisplay()
+        }
+        notify(L10n.str(.notifCopied), L10n.str(.notifNoFile))
+    }
+
     // MARK: – ObjC actions
 
-    @objc private func toggleMode()   { clipboardMode.toggle() }
-    @objc private func toggleAutoOCR() { autoOCREnabled.toggle() }
-    @objc private func quitApp()      { quit() }
+    @objc private func toggleMode()          { clipboardMode.toggle() }
+    @objc private func toggleAutoOCR()       { autoOCREnabled.toggle() }
+    @objc private func togglePrivacyFilter() { privacyFilterEnabled.toggle() }
+    @objc private func quitApp()             { quit() }
+
+    @objc private func togglePrivacyFilterButton(_ sender: NSButton) {
+        suppressMenuRebuild = true
+        privacyFilterEnabled = sender.state == .on
+        suppressMenuRebuild = false
+    }
+
+    @objc private func togglePrivacyFilterExpanded(_ sender: Any) {
+        privacyFilterExpanded.toggle()
+        refreshMenuDisplay()
+    }
+
+    @objc private func togglePrivacyFilterTypeButton(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue,
+              let type = PrivacyFilterType(rawValue: raw) else { return }
+        if privacyFilter.enabledTypes.contains(type) {
+            privacyFilter.enabledTypes.remove(type)
+        } else {
+            privacyFilter.enabledTypes.insert(type)
+        }
+        privacyFilter.saveToDefaults()
+        masker.filter = privacyFilter
+        if let swatchView = sender.superview?.subviews.compactMap({ $0 as? NSImageView }).first {
+            swatchView.image = Self.makePrivacySwatch(
+                color: type.redactionColor,
+                filled: privacyFilter.enabledTypes.contains(type)
+            )
+        }
+    }
+
+    // MARK: – Menu item builders
+
+    private func makePrivacyDisclosureItem() -> NSMenuItem {
+        let arrowView = NSImageView(frame: NSRect(x: 8, y: 12, width: 8, height: 8))
+        arrowView.image = Self.makeDisclosureArrow(expanded: privacyFilterExpanded)
+        arrowView.imageScaling = .scaleNone
+
+        let titleLabel = NSTextField(labelWithString: L10n.str(.privacyFilter))
+        titleLabel.frame = NSRect(x: 22, y: 4, width: 218, height: 20)
+        titleLabel.font = NSFont.menuFont(ofSize: 0)
+        titleLabel.textColor = .labelColor
+
+        let container = ClickableMenuItemView(frame: NSRect(x: 0, y: 0, width: 252, height: 28))
+        container.target = self
+        container.action = #selector(togglePrivacyFilterExpanded(_:))
+        container.addSubview(arrowView)
+        container.addSubview(titleLabel)
+
+        let item = NSMenuItem()
+        item.view = container
+        return item
+    }
+
+    private static func makeDisclosureArrow(expanded: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+
+        let path = NSBezierPath()
+        if expanded {
+            path.move(to: NSPoint(x: 1, y: 5.5))
+            path.line(to: NSPoint(x: 7, y: 5.5))
+            path.line(to: NSPoint(x: 4, y: 2))
+        } else {
+            path.move(to: NSPoint(x: 2, y: 1))
+            path.line(to: NSPoint(x: 2, y: 7))
+            path.line(to: NSPoint(x: 5.5, y: 4))
+        }
+        path.close()
+        NSColor.secondaryLabelColor.setFill()
+        path.fill()
+
+        image.unlockFocus()
+        return image
+    }
+
+    private func makePrivacyEnabledItem() -> NSMenuItem {
+        let button = NSButton(checkboxWithTitle: L10n.str(.privacyFilterEnabled), target: self, action: #selector(togglePrivacyFilterButton(_:)))
+        button.frame = NSRect(x: 28, y: 2, width: 212, height: 22)
+        button.state = privacyFilterEnabled ? .on : .off
+        button.font = NSFont.menuFont(ofSize: 0)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 252, height: 26))
+        container.addSubview(button)
+
+        let item = NSMenuItem()
+        item.view = container
+        return item
+    }
+
+    private func makePrivacySubItem(_ titleKey: L10n.Key, type: PrivacyFilterType) -> NSMenuItem {
+        let isEnabled = privacyFilter.enabledTypes.contains(type)
+        let swatchView = NSImageView(frame: NSRect(x: 30, y: 6, width: 14, height: 14))
+        swatchView.image = Self.makePrivacySwatch(color: type.redactionColor, filled: isEnabled)
+
+        let button = NSButton(title: L10n.str(titleKey), target: self, action: #selector(togglePrivacyFilterTypeButton(_:)))
+        button.frame = NSRect(x: 48, y: 2, width: 192, height: 22)
+        button.identifier = NSUserInterfaceItemIdentifier(type.rawValue)
+        button.isBordered = false
+        button.alignment = .left
+        button.font = NSFont.menuFont(ofSize: 0)
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 252, height: 26))
+        container.addSubview(swatchView)
+        container.addSubview(button)
+
+        let item = NSMenuItem()
+        item.view = container
+        return item
+    }
+
+    private static func makePrivacySwatch(color: NSColor, filled: Bool) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        let rect = NSRect(x: 2.5, y: 2.5, width: 9, height: 9)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
+        (filled ? color : NSColor.windowBackgroundColor).setFill()
+        path.fill()
+
+        color.setStroke()
+        path.lineWidth = 1.6
+        path.stroke()
+
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
     // MARK: – Launch at Login
 
     private var isLaunchAtLoginEnabled: Bool {

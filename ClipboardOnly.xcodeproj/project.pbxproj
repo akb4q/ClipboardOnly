@@ -13,6 +13,8 @@
 		AA0001000000000000000004 /* ScreenshotWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000004 /* ScreenshotWatcher.swift */; };
 		AA0001000000000000000005 /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000005 /* L10n.swift */; };
 		AA0001000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000006 /* Assets.xcassets */; };
+		AA0001000000000000000008 /* PrivacyFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000008 /* PrivacyFilter.swift */; };
+		AA0001000000000000000009 /* ImagePrivacyMasker.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000009 /* ImagePrivacyMasker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +25,8 @@
 		AA0000000000000000000005 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA0000000000000000000007 /* ClipboardOnly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClipboardOnly.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000008 /* PrivacyFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyFilter.swift; sourceTree = "<group>"; };
+		AA0000000000000000000009 /* ImagePrivacyMasker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePrivacyMasker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +56,8 @@
 				AA0000000000000000000003 /* MenuBarController.swift */,
 				AA0000000000000000000004 /* ScreenshotWatcher.swift */,
 				AA0000000000000000000005 /* L10n.swift */,
+				AA0000000000000000000008 /* PrivacyFilter.swift */,
+				AA0000000000000000000009 /* ImagePrivacyMasker.swift */,
 				AA0000000000000000000006 /* Assets.xcassets */,
 			);
 			path = ClipboardOnly;
@@ -134,6 +140,8 @@
 				AA0001000000000000000003 /* MenuBarController.swift in Sources */,
 				AA0001000000000000000004 /* ScreenshotWatcher.swift in Sources */,
 				AA0001000000000000000005 /* L10n.swift in Sources */,
+				AA0001000000000000000008 /* PrivacyFilter.swift in Sources */,
+				AA0001000000000000000009 /* ImagePrivacyMasker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

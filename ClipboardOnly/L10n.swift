@@ -22,6 +22,12 @@ enum L10n {
         case notifCopied, notifNoFile, notifSaved
         case notifVideo, notifVideoMsg, notifError
         case clipboardEmpty, characters
+        // Privacy filter
+        case privacyFilter, privacyFilterRedacted
+        case privacyFilterEnabled
+        case privacyFilterAPIKey, privacyFilterCreditCard, privacyFilterEmail
+        case privacyFilterPhone, privacyFilterIDCard, privacyFilterIP
+        case privacyFilterPassword
     }
 
     private static let strings: [String: [Key: String]] = [
@@ -48,6 +54,16 @@ enum L10n {
             .notifError:   "截图处理出错",
             .clipboardEmpty: "剪贴板为空",
             .characters:   "%d 个字符",
+            .privacyFilter:       "隐私过滤",
+            .privacyFilterRedacted: "已过滤 %d 处敏感内容",
+            .privacyFilterEnabled:  "启用",
+            .privacyFilterAPIKey:    "API Key",
+            .privacyFilterCreditCard:"信用卡号",
+            .privacyFilterEmail:     "邮箱地址",
+            .privacyFilterPhone:     "手机/电话",
+            .privacyFilterIDCard:    "身份证号",
+            .privacyFilterIP:        "IP 地址",
+            .privacyFilterPassword:  "密码/凭据",
         ],
         "en": [
             .appName:        "ClipboardOnly",
@@ -72,6 +88,16 @@ enum L10n {
             .notifError:   "Screenshot processing error",
             .clipboardEmpty: "Clipboard empty",
             .characters:   "%d characters",
+            .privacyFilter:       "Privacy Filter",
+            .privacyFilterRedacted: "%d sensitive item(s) redacted",
+            .privacyFilterEnabled:  "Enabled",
+            .privacyFilterAPIKey:    "API Keys",
+            .privacyFilterCreditCard:"Credit Card Numbers",
+            .privacyFilterEmail:     "Email Addresses",
+            .privacyFilterPhone:     "Phone Numbers",
+            .privacyFilterIDCard:    "ID Card Numbers",
+            .privacyFilterIP:        "IP Addresses",
+            .privacyFilterPassword:  "Passwords",
         ],
     ]
 }
