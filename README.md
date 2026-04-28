@@ -9,13 +9,13 @@ A small tool born from a simple frustration: every screenshot automatically crea
 - **Clipboard-only mode** — intercepts screenshots so they go straight to the clipboard instead of cluttering your Desktop.
 - **Auto OCR** — runs Apple Vision OCR on every screenshot and copies the recognized text. Works with Chinese (Simplified / Traditional) and English.
 - **Privacy Filter** *(new in v1.1.0)* — automatically detects and redacts sensitive content in both OCR text and the screenshot image itself:
-  - 🔴 API Keys (OpenAI, Stripe, GitHub, AWS, Slack, Google …)
-  - 🟠 Credit Card Numbers
-  - 🔵 Email Addresses
-  - 🟢 Phone Numbers (China / US)
-  - 🟣 ID Card Numbers (中国身份证)
-  - 🩵 IP Addresses
-  - 🩷 Passwords (`password: …`, `密码：…`)
+  - 🟥 API Keys (OpenAI, Stripe, GitHub, AWS, Slack, Google …)
+  - 🟧 Credit Card Numbers
+  - 🟦 Email Addresses
+  - 🟩 Phone Numbers (China / US)
+  - 🟪 ID Card Numbers (中国身份证)
+  - 🟨 IP Addresses
+  - 🟫 Passwords (`password: …`, `密码：…`)
 
   Matches in OCR text are replaced with placeholders (e.g. `[API_KEY]`); matches in screenshots are covered with per-type colored rectangles. A multi-line token heuristic handles long keys split across OCR lines.
 - **Manual OCR panel** — when auto-OCR is off, a small floating thumbnail lets you trigger OCR on demand.
