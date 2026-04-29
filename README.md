@@ -2,7 +2,8 @@
 is a Screenshot Utility for Mac.
 A small tool born from a simple frustration: every screenshot automatically creates a file you didn't ask for. This utility gives you back control — choose whether to save a file at all, and optionally run OCR on whatever you've captured.
 
-<img width="397" height="798" alt="image" src="https://github.com/user-attachments/assets/8b5c7d01-7138-4db5-9399-1811cad3c25f" />
+<img width="594" height="758" alt="image" src="https://github.com/user-attachments/assets/70173872-3046-4077-8b2f-fa93dcccbeae" />
+
 
 
 ## Features
