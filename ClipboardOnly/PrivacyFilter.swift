@@ -112,8 +112,13 @@ struct PrivacyFilter {
                 #"sk-[A-Za-z0-9\-_]{20,}"#,           // OpenAI / Anthropic style
                 #"sk-[A-Za-z0-9\-_\.\s]{20,}"#,       // Wrapped / OCR-split OpenAI-style tokens
                 #"pk_(?:live|test)_[A-Za-z0-9]{20,}"#, // Stripe
-                #"ghp_[A-Za-z0-9]{36}"#,               // GitHub personal token
+                #"ghp_[A-Za-z0-9]{36}"#,               // GitHub personal token (classic)
                 #"gho_[A-Za-z0-9]{36}"#,               // GitHub OAuth
+                #"ghu_[A-Za-z0-9]{36}"#,               // GitHub user-to-server
+                #"ghs_[A-Za-z0-9]{36}"#,               // GitHub server-to-server
+                #"ghr_[A-Za-z0-9]{36}"#,               // GitHub refresh
+                #"github_pat_[A-Za-z0-9_]{40,}"#,                // GitHub fine-grained PAT
+                #"github_pat_[A-Za-z0-9_\s]{40,}"#,              // OCR-split fine-grained PAT
                 #"AKIA[A-Z0-9]{16}"#,                   // AWS access key ID
                 #"xox[baprs]-[A-Za-z0-9\-]+"#,         // Slack tokens
                 #"AIza[A-Za-z0-9\-_]{35}"#,             // Google API key
