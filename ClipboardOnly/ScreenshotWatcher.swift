@@ -46,9 +46,13 @@ final class ScreenshotWatcher {
                 let url = URL(fileURLWithPath: paths[i])
                 guard ScreenshotWatcher.validExtensions.contains(url.pathExtension.lowercased()) else { continue }
 
-                // Brief delay so macOS finishes writing the file
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    me.handler(url)
+                // Wait until the file size is stable across two consecutive
+                // checks before dispatching. A fixed 200 ms delay was unreliable
+                // for large multi-monitor PNGs, leaving handlers to read partial
+                // files (which then decoded as nil or black images).
+                me.queue.asyncAfter(deadline: .now() + 0.15) { [weak me] in
+                    guard let me else { return }
+                    me.dispatchWhenStable(url: url, attempts: 0)
                 }
             }
         }
@@ -66,6 +70,31 @@ final class ScreenshotWatcher {
         if let s = stream {
             FSEventStreamSetDispatchQueue(s, queue)   // ← modern API, replaces RunLoop version
             FSEventStreamStart(s)
+        }
+    }
+
+    private func dispatchWhenStable(url: URL, attempts: Int) {
+        let path = url.path
+        var st1 = stat()
+        guard lstat(path, &st1) == 0 else { return } // file gone — give up
+        let size1 = st1.st_size
+
+        // Cap retries so a stuck/never-finished writer can't loop forever.
+        let maxAttempts = 20  // ~3s total at 0.15s spacing
+        if attempts >= maxAttempts {
+            DispatchQueue.main.async { self.handler(url) }
+            return
+        }
+
+        queue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self else { return }
+            var st2 = stat()
+            guard lstat(path, &st2) == 0 else { return }
+            if st2.st_size == size1, size1 > 0 {
+                DispatchQueue.main.async { self.handler(url) }
+            } else {
+                self.dispatchWhenStable(url: url, attempts: attempts + 1)
+            }
         }
     }
 

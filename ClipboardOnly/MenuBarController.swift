@@ -22,7 +22,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     @Published var clipboardMode: Bool {
         didSet {
             UserDefaults.standard.set(clipboardMode, forKey: "clipboardMode")
-            setThumbnailVisible(!clipboardMode)
+            setThumbnailVisible(false)
             updateButton()
             DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
         }
@@ -80,9 +80,33 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     override init() {
         interceptDir     = Self.interceptPath
-        originalLocation = Self.readScreenshotLocation()
-        originalTarget   = UserDefaults(suiteName: Self.screencaptureDomain)?
+
+        // Read current screencapture defaults, but ignore them if they already
+        // point at our intercept dir / "file" — that would mean a previous
+        // instance crashed before restoring, and re-reading would permanently
+        // overwrite the user's real preferences. Prefer our own persisted copy.
+        let liveLocation = Self.readScreenshotLocation()
+        let liveTarget   = UserDefaults(suiteName: Self.screencaptureDomain)?
             .string(forKey: "target") ?? "file"
+        let savedLocation = UserDefaults.standard.string(forKey: "originalLocation")
+        let savedTarget   = UserDefaults.standard.string(forKey: "originalTarget")
+
+        if liveLocation == Self.interceptPath.path, let s = savedLocation {
+            originalLocation = s
+        } else {
+            originalLocation = liveLocation
+            UserDefaults.standard.set(liveLocation, forKey: "originalLocation")
+        }
+
+        // If liveTarget is "file", we can't tell whether the user originally
+        // wanted "file" or whether our previous instance set it — fall back to
+        // saved value if we have one.
+        if let s = savedTarget, liveTarget == "file" {
+            originalTarget = s
+        } else {
+            originalTarget = liveTarget
+            UserDefaults.standard.set(liveTarget, forKey: "originalTarget")
+        }
         clipboardMode          = UserDefaults.standard.bool(forKey: "clipboardMode")
         autoOCREnabled         = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
         privacyFilterEnabled   = UserDefaults.standard.bool(forKey: "privacyFilterEnabled")
@@ -99,7 +123,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
         setupInterceptDir()
         setScreenshotLocation(interceptDir.path)
-        setThumbnailVisible(!clipboardMode)
+        setThumbnailVisible(false)
         setupStatusItem()
 
         watcher = ScreenshotWatcher(watchDir: interceptDir) { [weak self] url in
@@ -632,6 +656,19 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     private func handleNewFile(_ url: URL) {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        // Reject symlinks and anything that isn't a regular file.
+        // Without this, an attacker could plant ~/.clipboard_only/intercept/x.png
+        // as a symlink to ~/.ssh/id_rsa and we'd move/read the target.
+        var st = stat()
+        guard lstat(url.path, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG else { return }
+
+        // Resolve and verify the file is still inside the intercept directory.
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+        let interceptRoot = interceptDir.resolvingSymlinksInPath().standardizedFileURL.path
+        guard resolved.hasPrefix(interceptRoot + "/") else { return }
+
         let ext = url.pathExtension.lowercased()
 
         if clipboardMode {
@@ -643,6 +680,10 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                        String(format: L10n.str(.notifVideoMsg), url.lastPathComponent))
             } else {
                 guard let image = NSImage(contentsOf: url) else { return }
+                // Force a full decode now, while the source file still exists.
+                // NSImage is lazy: if we delete the file first and the privacy
+                // masker reads pixels asynchronously, it can get nil/empty data.
+                guard image.tiffRepresentation != nil else { return }
                 try? FileManager.default.removeItem(at: url)
 
                 if privacyFilterEnabled {
@@ -863,8 +904,25 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     // MARK: – macOS screenshot defaults
 
     private func setupInterceptDir() {
-        try? FileManager.default.createDirectory(
-            at: interceptDir, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        let path = interceptDir.path
+
+        // Reject symlinks at either path component to defeat pre-launch redirection.
+        // lstat does NOT follow symlinks, so we can detect a planted link.
+        let parent = interceptDir.deletingLastPathComponent().path
+        for p in [parent, path] {
+            var st = stat()
+            if lstat(p, &st) == 0, (st.st_mode & S_IFMT) == S_IFLNK {
+                try? fm.removeItem(atPath: p)
+            }
+        }
+
+        try? fm.createDirectory(
+            at: interceptDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        // Tighten permissions even if the directory already existed.
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: path)
     }
 
     private func setScreenshotLocation(_ path: String) {
