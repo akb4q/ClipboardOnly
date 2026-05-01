@@ -3,7 +3,8 @@ is a Screenshot Utility for Mac.
 A small tool born from a simple frustration: every screenshot automatically creates a file you didn't ask for. This utility gives you back control — choose whether to save a file at all, and optionally run OCR on whatever you've captured.
 
 
-<img width="602" height="736" alt="image" src="https://github.com/user-attachments/assets/933b4f14-3c1a-45a4-b8d6-a7ea844bda5f" />
+<img width="592" height="810" alt="clip-current" src="https://github.com/user-attachments/assets/d900bcaa-320e-48af-b8f0-77164de17874" />
+
 
 
 
