@@ -23,6 +23,7 @@ A small tool born from a simple frustration: every screenshot automatically crea
 
   Matches in OCR text are replaced with placeholders (e.g. `[API_KEY]`); matches in screenshots are covered with per-type colored rectangles. A multi-line token heuristic handles long keys split across OCR lines.
 - **Manual OCR panel** — when auto-OCR is off, a small floating thumbnail lets you trigger OCR on demand.
+- **Paste as File Path (for CLI)** *(new in v1.2.0)* — terminals can't paste image data, so `Cmd+V`-ing a screenshot into Claude Code or other CLI tools gives you nothing. Toggle this on and each screenshot is also cached to a file (`~/Library/Caches/<bundle>/clip-current.png`); the clipboard carries both the image and the absolute path. `Cmd+V` in a terminal yields the path, and Claude Code reads the image directly. Off by default so pasting into Slack / Mail / image editors still works as before. The cache is single-file rolling — at most one file ever exists, cleared before the next screenshot, on any external clipboard write, on quit, and at launch.
 - **Launch at login** toggle.
 - **Bilingual UI** — automatically follows system language (中文 / English).
 
