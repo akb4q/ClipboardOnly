@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminatePreviousInstances()
+        // Drop any cached path-mode image left over from a previous run.
+        ClipboardImageCache.clear()
         // Create after launch so NSStatusBar is fully ready.
         controller = MenuBarController()
     }

@@ -43,6 +43,13 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             }
         }
     }
+    @Published var pasteAsPathEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(pasteAsPathEnabled, forKey: "pasteAsPathEnabled")
+            if !pasteAsPathEnabled { ClipboardImageCache.clear() }
+            DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
+        }
+    }
     @Published private(set) var saveDirectory: URL
 
     // MARK: – Private state
@@ -110,6 +117,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         clipboardMode          = UserDefaults.standard.bool(forKey: "clipboardMode")
         autoOCREnabled         = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
         privacyFilterEnabled   = UserDefaults.standard.bool(forKey: "privacyFilterEnabled")
+        pasteAsPathEnabled     = UserDefaults.standard.bool(forKey: "pasteAsPathEnabled")
 
         let saved = originalLocation == Self.interceptPath.path
             ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
@@ -197,6 +205,16 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         autoOCRItem.state = autoOCREnabled ? .on : .off
         autoOCRItem.target = self
         menu.addItem(autoOCRItem)
+
+        let pathItem = NSMenuItem(
+            title: L10n.str(.pasteAsPath),
+            action: #selector(togglePasteAsPath),
+            keyEquivalent: ""
+        )
+        pathItem.state = pasteAsPathEnabled ? .on : .off
+        pathItem.target = self
+        pathItem.toolTip = L10n.str(.pasteAsPathHint)
+        menu.addItem(pathItem)
 
         menu.addItem(makePrivacyDisclosureItem())
         if privacyFilterExpanded {
@@ -400,6 +418,9 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 if current != self.lastChangeCount {
                     self.lastChangeCount = current
                     self.clipboardChangedSinceLaunch = true
+                    // External clipboard write — the cached image (if any) is
+                    // no longer referenced, drop it from disk immediately.
+                    ClipboardImageCache.clear()
                     if self.ocrInFlightChangeCount != current && self.ocrChangeCount != current {
                         self.resetOCRState()
                     }
@@ -483,13 +504,27 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private func writeImageToClipboard(_ image: NSImage, recognizedText: String? = nil) -> Int? {
         guard let tiffData = image.tiffRepresentation else { return nil }
 
+        // Roll the on-disk cache for "paste as path" mode. Always clear the
+        // previous file first; only re-create it when path mode is on.
+        ClipboardImageCache.clear()
+
         let item = NSPasteboardItem()
         item.setData(tiffData, forType: .tiff)
-        if let rep = NSBitmapImageRep(data: tiffData),
-           let pngData = rep.representation(using: .png, properties: [:]) {
+
+        let pngData: Data? = NSBitmapImageRep(data: tiffData)?
+            .representation(using: .png, properties: [:])
+        if let pngData {
             item.setData(pngData, forType: .png)
         }
-        if let recognizedText, !recognizedText.isEmpty {
+
+        if pasteAsPathEnabled, let pngData,
+           let cachedURL = ClipboardImageCache.write(pngData) {
+            // Path mode wins over OCR text for the plain-text slot — terminals
+            // need an absolute path on Cmd+V. OCR text is still kept in
+            // lastOCRText and surfaced via the menu preview.
+            item.setString(cachedURL.absoluteString, forType: .fileURL)
+            item.setString(cachedURL.path, forType: .string)
+        } else if let recognizedText, !recognizedText.isEmpty {
             item.setString(recognizedText, forType: .string)
         }
 
@@ -579,7 +614,17 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     let finalText = self.privacyFilterEnabled
                         ? self.privacyFilter.filter(normalizedText).output
                         : normalizedText
-                    if let newChangeCount = self.writeTextToClipboard(finalText) {
+                    if self.pasteAsPathEnabled {
+                        // Keep the path on the clipboard; expose OCR text only
+                        // through the menu (click-to-copy).
+                        self.lastOCRText = finalText
+                        self.ocrChangeCount = changeCount
+                        self.manualOCRChangeCount = changeCount
+                        self.manualOCRPanelController?.refresh()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                            self?.dismissManualOCRPanel()
+                        }
+                    } else if let newChangeCount = self.writeTextToClipboard(finalText) {
                         self.lastChangeCount = newChangeCount
                         self.ocrChangeCount = newChangeCount
                         self.lastOCRText = finalText
@@ -593,6 +638,9 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     self.ocrChangeCount = changeCount
                     self.lastOCRText = nil
                     self.manualOCRPanelController?.refresh()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                        self?.dismissManualOCRPanel()
+                    }
                 }
 
                 self.refreshMenuDisplay()
@@ -626,7 +674,10 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     let finalText = self.privacyFilterEnabled
                         ? self.privacyFilter.filter(normalizedText).output
                         : normalizedText
-                    if let newChangeCount = self.writeTextToClipboard(finalText) {
+                    if self.pasteAsPathEnabled {
+                        self.lastOCRText = finalText
+                        self.ocrChangeCount = sourceChangeCount
+                    } else if let newChangeCount = self.writeTextToClipboard(finalText) {
                         self.lastChangeCount = newChangeCount
                         self.ocrChangeCount = newChangeCount
                         self.lastOCRText = finalText
@@ -731,6 +782,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func toggleMode()          { clipboardMode.toggle() }
     @objc private func toggleAutoOCR()       { autoOCREnabled.toggle() }
     @objc private func togglePrivacyFilter() { privacyFilterEnabled.toggle() }
+    @objc private func togglePasteAsPath()   { pasteAsPathEnabled.toggle() }
     @objc private func quitApp()             { quit() }
 
     @objc private func togglePrivacyFilterButton(_ sender: NSButton) {
@@ -899,6 +951,9 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         dismissManualOCRPanel()
         NSStatusBar.system.removeStatusItem(statusItem)
         restoreLocation()
+        // Don't leave a screenshot on disk after the app quits — the user's
+        // mental model is "ClipboardOnly = no leftover files".
+        ClipboardImageCache.clear()
     }
 
     // MARK: – macOS screenshot defaults
@@ -1007,6 +1062,7 @@ private final class OCRQuickActionPanelController: NSObject {
     func show() {
         let img = controller.manualOCRThumbnail
         contentView.setImage(img)
+        contentView.setOCRIconHidden(controller.pasteAsPathEnabled)
 
         // Compute panel size from image, capping at maxW×maxH, never upscaling
         let maxW: CGFloat = 250
@@ -1036,6 +1092,7 @@ private final class OCRQuickActionPanelController: NSObject {
 
     func refresh() {
         contentView.setImage(controller.manualOCRThumbnail)
+        contentView.setOCRIconHidden(controller.pasteAsPathEnabled)
     }
 
     func close() {
@@ -1101,6 +1158,10 @@ private final class OCRThumbnailView: NSView {
 
     func setImage(_ image: NSImage?) {
         imageView.image = image
+    }
+
+    func setOCRIconHidden(_ hidden: Bool) {
+        iconView.isHidden = hidden
     }
 
     override func layout() {

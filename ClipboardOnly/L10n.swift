@@ -28,6 +28,7 @@ enum L10n {
         case privacyFilterAPIKey, privacyFilterCreditCard, privacyFilterEmail
         case privacyFilterPhone, privacyFilterIDCard, privacyFilterIP
         case privacyFilterPassword
+        case pasteAsPath, pasteAsPathHint
     }
 
     private static let strings: [String: [Key: String]] = [
@@ -64,6 +65,8 @@ enum L10n {
             .privacyFilterIDCard:    "身份证号",
             .privacyFilterIP:        "IP 地址",
             .privacyFilterPassword:  "密码/凭据",
+            .pasteAsPath:     "粘贴为文件路径（用于 CLI）",
+            .pasteAsPathHint: "截图额外缓存为文件，剪贴板同时携带绝对路径，方便 Claude Code 等终端工具读取",
         ],
         "en": [
             .appName:        "ClipboardOnly",
@@ -98,6 +101,8 @@ enum L10n {
             .privacyFilterIDCard:    "ID Card Numbers",
             .privacyFilterIP:        "IP Addresses",
             .privacyFilterPassword:  "Passwords",
+            .pasteAsPath:     "Paste as File Path (for CLI)",
+            .pasteAsPathHint: "Caches the screenshot to a file and adds its absolute path to the clipboard, so terminals like Claude Code can read it.",
         ],
     ]
 }
