@@ -63,6 +63,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private let interceptDir: URL
     private let originalLocation: String
     private let originalTarget: String       // "clipboard", "file", "preview", etc.
+    private let originalShowThumbnail: Bool?
     private var watcher: ScreenshotWatcher?
     private var clipboardPollTimer: Timer?
     private var lastChangeCount: Int = 0
@@ -95,8 +96,12 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         let liveLocation = Self.readScreenshotLocation()
         let liveTarget   = UserDefaults(suiteName: Self.screencaptureDomain)?
             .string(forKey: "target") ?? "file"
+        let liveShowThumbnail = UserDefaults(suiteName: Self.screencaptureDomain)?
+            .object(forKey: "show-thumbnail") as? Bool
         let savedLocation = UserDefaults.standard.string(forKey: "originalLocation")
         let savedTarget   = UserDefaults.standard.string(forKey: "originalTarget")
+        let savedShowThumbnailWasSet = UserDefaults.standard.object(forKey: "originalShowThumbnailWasSet") as? Bool
+        let savedShowThumbnail = UserDefaults.standard.object(forKey: "originalShowThumbnail") as? Bool
 
         if liveLocation == Self.interceptPath.path, let s = savedLocation {
             originalLocation = s
@@ -114,9 +119,23 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             originalTarget = liveTarget
             UserDefaults.standard.set(liveTarget, forKey: "originalTarget")
         }
+
+        if liveLocation == Self.interceptPath.path, let wasSet = savedShowThumbnailWasSet {
+            originalShowThumbnail = wasSet ? savedShowThumbnail : nil
+        } else {
+            originalShowThumbnail = liveShowThumbnail
+            if let liveShowThumbnail {
+                UserDefaults.standard.set(true, forKey: "originalShowThumbnailWasSet")
+                UserDefaults.standard.set(liveShowThumbnail, forKey: "originalShowThumbnail")
+            } else {
+                UserDefaults.standard.set(false, forKey: "originalShowThumbnailWasSet")
+                UserDefaults.standard.removeObject(forKey: "originalShowThumbnail")
+            }
+        }
+
         clipboardMode          = UserDefaults.standard.bool(forKey: "clipboardMode")
         autoOCREnabled         = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
-        privacyFilterEnabled   = UserDefaults.standard.bool(forKey: "privacyFilterEnabled")
+        privacyFilterEnabled   = UserDefaults.standard.object(forKey: "privacyFilterEnabled") as? Bool ?? true
         pasteAsPathEnabled     = UserDefaults.standard.bool(forKey: "pasteAsPathEnabled")
 
         let saved = originalLocation == Self.interceptPath.path
@@ -725,10 +744,14 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         if clipboardMode {
             if ["mov", "mp4"].contains(ext) {
                 let dest = saveDirectory.appendingPathComponent(url.lastPathComponent)
-                try? FileManager.default.moveItem(at: url, to: dest)
-                NSWorkspace.shared.activateFileViewerSelecting([dest])
-                notify(L10n.str(.notifVideo),
-                       String(format: L10n.str(.notifVideoMsg), url.lastPathComponent))
+                do {
+                    try FileManager.default.moveItem(at: url, to: dest)
+                    NSWorkspace.shared.activateFileViewerSelecting([dest])
+                    notify(L10n.str(.notifVideo),
+                           String(format: L10n.str(.notifVideoMsg), url.lastPathComponent))
+                } catch {
+                    notify(L10n.str(.notifError), error.localizedDescription)
+                }
             } else {
                 guard let image = NSImage(contentsOf: url) else { return }
                 // Force a full decode now, while the source file still exists.
@@ -754,8 +777,12 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             }
         } else {
             let dest = saveDirectory.appendingPathComponent(url.lastPathComponent)
-            try? FileManager.default.moveItem(at: url, to: dest)
-            notify(L10n.str(.notifSaved), dest.path)
+            do {
+                try FileManager.default.moveItem(at: url, to: dest)
+                notify(L10n.str(.notifSaved), dest.path)
+            } catch {
+                notify(L10n.str(.notifError), error.localizedDescription)
+            }
         }
     }
 
@@ -1001,7 +1028,11 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
         // Restore original target (e.g. "clipboard") and thumbnail visibility
         screencaptureDefaults?.set(originalTarget, forKey: "target")
-        screencaptureDefaults?.set(true, forKey: "show-thumbnail")
+        if let originalShowThumbnail {
+            screencaptureDefaults?.set(originalShowThumbnail, forKey: "show-thumbnail")
+        } else {
+            screencaptureDefaults?.removeObject(forKey: "show-thumbnail")
+        }
         syncScreencapturePrefs()
     }
 
