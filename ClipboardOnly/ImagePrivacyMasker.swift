@@ -182,9 +182,13 @@ final class ImagePrivacyMasker {
     // directly below it (form field below label) or to the right of it (form
     // field beside label). Tight thresholds keep this from firing on prose.
 
+    // NOTE: the pattern uses literal characters only — NSRegularExpression's
+    // ICU engine does NOT accept Swift-style `\u{XXXX}` escapes; that silently
+    // returns nil from try? and the whole detector becomes a no-op. A previous
+    // version of this regex shipped with `\u{FF0A}` and never matched anything.
     private static let passwordLabelOnlyRegex: NSRegularExpression? = {
         try? NSRegularExpression(
-            pattern: #"^\s*[*\u{FF0A}]?\s*(?:密码|密碼|口令|password|passwd|passcode|pwd)\s*[:：=]?\s*$"#,
+            pattern: #"^\s*(?:密码|密碼|口令|password|passwd|passcode|pwd)\s*[:：=]?\s*$"#,
             options: [.caseInsensitive]
         )
     }()
