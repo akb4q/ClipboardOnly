@@ -17,8 +17,8 @@ A small tool born from a simple frustration: every screenshot automatically crea
   - 🟥 API Keys (OpenAI, Stripe, GitHub, AWS, Slack, Google …)
   - 🟧 Credit Card Numbers
   - 🟦 Email Addresses
-  - 🟩 Phone Numbers (China / US)
-  - 🟪 ID Card Numbers (中国身份证)
+  - 🟩 Phone Numbers 
+  - 🟪 ID Card Numbers 
   - 🟨 IP Addresses
   - 🟫 Passwords (`password: …`, `密码：…`)
 
