@@ -2,6 +2,31 @@
 
 import Foundation
 
+// MARK: – Regex compile helper
+//
+// NSRegularExpression's ICU engine has its own pattern grammar that is *not*
+// the same as Swift's string-literal grammar. The two trip points we have
+// already hit:
+//
+//   * `\u{XXXX}` (Swift escape) is rejected by ICU — use `\uXXXX` (no braces)
+//     or a literal character.
+//   * Some character-class shorthands behave differently across engines.
+//
+// `try? NSRegularExpression(...)` swallows these errors and returns nil, so the
+// pattern silently never matches anything in production. Patterns are static
+// constants known at build time, so any failure here is a bug we want to
+// crash on at launch — fail loud, not silent. Always use this helper for
+// project regex compilation; do not call `try? NSRegularExpression` directly.
+@inline(__always)
+func compileRegex(_ pattern: String,
+                  options: NSRegularExpression.Options = []) -> NSRegularExpression {
+    do {
+        return try NSRegularExpression(pattern: pattern, options: options)
+    } catch {
+        fatalError("Invalid regex pattern at compile time:\n  \(pattern)\n  \(error)")
+    }
+}
+
 // MARK: – Filter types
 
 enum PrivacyFilterType: String, CaseIterable, Codable {
@@ -151,9 +176,7 @@ struct PrivacyFilter {
             .password: #"(?i)(?:密码|密碼|口令|password|passwd|passcode|pwd)(?:\s*[:：=]\s*\S{4,}|[ \t]*\n\s*(?=\S*\d)[A-Za-z0-9!@#$%^&*_\-+=]{4,40})"#,
         ]
 
-        return defs.compactMapValues { pattern in
-            try? NSRegularExpression(pattern: pattern)
-        }
+        return defs.mapValues { compileRegex($0) }
     }()
 }
 
