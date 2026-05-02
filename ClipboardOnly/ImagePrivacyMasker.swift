@@ -95,6 +95,9 @@ final class ImagePrivacyMasker {
                 }
 
                 sensitiveRects.append(contentsOf: self.detectMultilineTokenRects(in: recognizedLines))
+                if self.filter.enabledTypes.contains(.password) {
+                    sensitiveRects.append(contentsOf: self.detectPasswordLabelValueRects(in: recognizedLines))
+                }
             }
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
@@ -164,6 +167,101 @@ final class ImagePrivacyMasker {
         guard let previous else { return true }
         let gap = previous.minY - current.maxY
         return gap >= -0.02 && gap < max(previous.height, current.height) * 1.8
+    }
+
+    // MARK: – Form-field label/value pairing
+    //
+    // The OCR-text regex catches "密碼: hunter2" and even "密碼\n hunter2" once
+    // observations are joined, but the IMAGE masker filters per-observation —
+    // when a form puts the "密碼" label and the input value in two visually
+    // separate cells, neither line matches the password regex on its own and
+    // the value is never redacted on the pixel image.
+    //
+    // detectPasswordLabelValueRects fills the gap: find a label-only
+    // observation, then redact the spatially nearest value-shaped observation
+    // directly below it (form field below label) or to the right of it (form
+    // field beside label). Tight thresholds keep this from firing on prose.
+
+    private static let passwordLabelOnlyRegex: NSRegularExpression? = {
+        try? NSRegularExpression(
+            pattern: #"^\s*[*\u{FF0A}]?\s*(?:密码|密碼|口令|password|passwd|passcode|pwd)\s*[:：=]?\s*$"#,
+            options: [.caseInsensitive]
+        )
+    }()
+
+    private func detectPasswordLabelValueRects(
+        in lines: [(observation: VNRecognizedTextObservation, candidate: VNRecognizedText, text: String)]
+    ) -> [RedactionRect] {
+        guard let labelRegex = Self.passwordLabelOnlyRegex else { return [] }
+
+        var rects: [RedactionRect] = []
+        for label in lines {
+            let labelText = label.text
+            let labelRange = NSRange(labelText.startIndex..., in: labelText)
+            guard labelRegex.firstMatch(in: labelText, range: labelRange) != nil else { continue }
+
+            guard let value = nearestValueObservation(forLabel: label.observation, in: lines) else { continue }
+            rects.append(RedactionRect(rect: value.observation.boundingBox, type: .password))
+        }
+        return rects
+    }
+
+    private func nearestValueObservation(
+        forLabel labelBox: VNRecognizedTextObservation,
+        in lines: [(observation: VNRecognizedTextObservation, candidate: VNRecognizedText, text: String)]
+    ) -> (observation: VNRecognizedTextObservation, candidate: VNRecognizedText, text: String)? {
+        let lb = labelBox.boundingBox
+        // Vision: normalized coords, origin bottom-left. "Visually below" = lower midY.
+        // Limit search to a tight window so we don't grab unrelated form fields.
+        let verticalReach: CGFloat = 0.08    // ~8% of image height
+        let horizontalReach: CGFloat = 0.20  // ~20% of image width
+
+        var best: (line: (observation: VNRecognizedTextObservation, candidate: VNRecognizedText, text: String), score: CGFloat)?
+
+        for candidate in lines {
+            let cb = candidate.observation.boundingBox
+            if cb == lb { continue }
+
+            let trimmed = candidate.text.trimmingCharacters(in: .whitespaces)
+            guard looksLikeFormValue(trimmed) else { continue }
+
+            // Pair A: value sits BELOW label, roughly same X column.
+            let isBelow = cb.midY < lb.midY
+            let xOverlapsBelow = max(cb.minX, lb.minX) < min(cb.maxX, lb.maxX) + 0.02
+            let yGap = lb.minY - cb.maxY
+            if isBelow, xOverlapsBelow, yGap > -0.02, yGap < verticalReach {
+                let score = yGap + abs(cb.midX - lb.midX) * 0.5
+                if best == nil || score < best!.score { best = (candidate, score) }
+                continue
+            }
+
+            // Pair B: value sits TO THE RIGHT of label, roughly same Y row.
+            let yOverlap = max(cb.minY, lb.minY) < min(cb.maxY, lb.maxY)
+            let xGap = cb.minX - lb.maxX
+            if yOverlap, xGap > -0.02, xGap < horizontalReach {
+                let score = xGap + abs(cb.midY - lb.midY) * 0.5
+                if best == nil || score < best!.score { best = (candidate, score) }
+            }
+        }
+        return best?.line
+    }
+
+    private func looksLikeFormValue(_ text: String) -> Bool {
+        let compact = text.filter { !$0.isWhitespace }
+        guard (4...64).contains(compact.count) else { return false }
+        // Reject obvious labels / prose: must contain at least one digit OR a
+        // password-shaped special character. Pure-letter words ("please",
+        // "required") are filtered out so we don't mask sentence fragments.
+        let hasDigit = compact.contains(where: { $0.isNumber })
+        let specials: Set<Character> = ["!", "@", "#", "$", "%", "^", "&", "*", "_", "-", "+", "=", "?", "/", "\\", "."]
+        let hasSpecial = compact.contains(where: { specials.contains($0) })
+        guard hasDigit || hasSpecial else { return false }
+        // Reject if it itself looks like a label (starts with another known label keyword).
+        let lower = text.lowercased()
+        for keyword in ["password", "passwd", "pwd", "passcode", "口令", "密码", "密碼"] {
+            if lower.hasPrefix(keyword) { return false }
+        }
+        return true
     }
 
     // MARK: – Draw redaction rectangles

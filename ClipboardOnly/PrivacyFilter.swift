@@ -141,7 +141,14 @@ struct PrivacyFilter {
             .ipAddress: #"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"#,
 
             // Password / credential fields with Chinese or English labels.
-            .password: #"(?i)(?:密码|口令|password|passwd|passcode|pwd)\s*[:：=]\s*\S{4,}"#,
+            // Two shapes:
+            //   * inline   "密碼: hunter2"  /  "password=...."
+            //   * stacked  "密碼\n4016d6"  — form layouts where the label sits
+            //              above the input and OCR returns them on separate
+            //              lines. Restrict the value to credential-shaped
+            //              tokens (must contain a digit) so prose like
+            //              "password\nplease help me" doesn't match.
+            .password: #"(?i)(?:密码|密碼|口令|password|passwd|passcode|pwd)(?:\s*[:：=]\s*\S{4,}|[ \t]*\n\s*(?=\S*\d)[A-Za-z0-9!@#$%^&*_\-+=]{4,40})"#,
         ]
 
         return defs.compactMapValues { pattern in
