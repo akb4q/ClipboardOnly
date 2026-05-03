@@ -532,6 +532,28 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
+    private static func decodedCopy(_ cgImage: CGImage) -> CGImage? {
+        return autoreleasepool {
+            let width = cgImage.width
+            let height = cgImage.height
+            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
+                | CGImageAlphaInfo.premultipliedFirst.rawValue
+            guard let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo
+            ) else { return nil }
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return ctx.makeImage()
+        }
+    }
+
     private static func resized(_ cgImage: CGImage, maxLongEdge: CGFloat) -> CGImage? {
         let pxW = CGFloat(cgImage.width)
         let pxH = CGFloat(cgImage.height)
@@ -824,7 +846,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             } else {
                 let options = [kCGImageSourceShouldCache: false] as CFDictionary
                 guard let source = CGImageSourceCreateWithURL(url as CFURL, options),
-                      let image = CGImageSourceCreateImageAtIndex(source, 0, options) else { return }
+                      let sourceImage = CGImageSourceCreateImageAtIndex(source, 0, options),
+                      let image = Self.decodedCopy(sourceImage) else { return }
                 try? FileManager.default.removeItem(at: url)
 
                 if privacyFilterEnabled {
