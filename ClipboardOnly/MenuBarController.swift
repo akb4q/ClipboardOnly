@@ -520,8 +520,49 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         ocrInFlightChangeCount = nil
     }
 
+    /// Anthropic / most multimodal LLMs resize the long edge to 1568 px before
+    /// scoring, so anything larger pays upload bandwidth + 5 MB hard-cap risk
+    /// for zero benefit. Pre-resizing to this exact threshold matches what the
+    /// server would do anyway — no additional quality loss vs sending the
+    /// original — and slashes token cost (cost is proportional to pixel count).
+    /// Skipped for images already within the cap.
+    private static let llmMaxLongEdge: CGFloat = 1568
+
+    private static func resizedForLLM(_ image: NSImage) -> NSImage {
+        guard let tiff = image.tiffRepresentation,
+              let rep  = NSBitmapImageRep(data: tiff) else { return image }
+        let pxW = CGFloat(rep.pixelsWide)
+        let pxH = CGFloat(rep.pixelsHigh)
+        let longEdge = max(pxW, pxH)
+        guard longEdge > llmMaxLongEdge else { return image }
+
+        let scale = llmMaxLongEdge / longEdge
+        let newW = Int((pxW * scale).rounded())
+        let newH = Int((pxH * scale).rounded())
+
+        guard let cg = rep.cgImage,
+              let ctx = CGContext(
+                data: nil,
+                width: newW, height: newH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue
+                          | CGImageAlphaInfo.premultipliedFirst.rawValue
+              ) else { return image }
+        ctx.interpolationQuality = .high
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: newW, height: newH))
+        guard let scaled = ctx.makeImage() else { return image }
+        return NSImage(cgImage: scaled, size: NSSize(width: newW, height: newH))
+    }
+
     private func writeImageToClipboard(_ image: NSImage, recognizedText: String? = nil) -> Int? {
-        guard let tiffData = image.tiffRepresentation else { return nil }
+        // Resize down to LLM-friendly dimensions before any encoding. Privacy
+        // mask already ran on the full-resolution image (best OCR), so OCR-text
+        // accuracy is preserved; only the bytes that hit the clipboard / cache
+        // file are smaller.
+        let outImage = Self.resizedForLLM(image)
+        guard let tiffData = outImage.tiffRepresentation else { return nil }
 
         // Roll the on-disk cache for "paste as path" mode. Always clear the
         // previous file first; only re-create it when path mode is on.
