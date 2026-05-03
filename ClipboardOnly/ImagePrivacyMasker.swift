@@ -40,12 +40,7 @@ final class ImagePrivacyMasker {
 
     /// Returns a new image with sensitive regions covered by solid black rectangles.
     /// Runs on a background thread; completion is called on the main thread.
-    func mask(_ image: NSImage, completion: @escaping (NSImage?) -> Void) {
-        guard let cgImage = image.cgImage else {
-            DispatchQueue.main.async { completion(nil) }
-            return
-        }
-
+    func mask(_ cgImage: CGImage, completion: @escaping (CGImage?) -> Void) {
         recognizeAndFilter(in: cgImage) { [weak self] rects in
             let masked = self?.applyMask(to: cgImage, rects: rects)
             DispatchQueue.main.async { completion(masked) }
@@ -61,51 +56,53 @@ final class ImagePrivacyMasker {
 
     private func recognizeAndFilter(in cgImage: CGImage, completion: @escaping ([RedactionRect]) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { completion([]); return }
+            autoreleasepool {
+                guard let self else { completion([]); return }
 
-            var sensitiveRects: [RedactionRect] = []
+                var sensitiveRects: [RedactionRect] = []
 
-            let request = VNRecognizeTextRequest { [weak self] request, _ in
-                guard let self,
-                      let observations = request.results as? [VNRecognizedTextObservation]
-                else { return }
+                let request = VNRecognizeTextRequest { [weak self] request, _ in
+                    guard let self,
+                          let observations = request.results as? [VNRecognizedTextObservation]
+                    else { return }
 
-                var recognizedLines: [(observation: VNRecognizedTextObservation, candidate: VNRecognizedText, text: String)] = []
+                    var recognizedLines: [(observation: VNRecognizedTextObservation, candidate: VNRecognizedText, text: String)] = []
 
-                for obs in observations {
-                    guard let candidate = obs.topCandidates(1).first else { continue }
-                    let recognized = candidate.string
-                    recognizedLines.append((obs, candidate, recognized))
-                    let result = self.filter.filter(recognized)
-                    guard result.didMatch else { continue }
+                    for obs in observations {
+                        guard let candidate = obs.topCandidates(1).first else { continue }
+                        let recognized = candidate.string
+                        recognizedLines.append((obs, candidate, recognized))
+                        let result = self.filter.filter(recognized)
+                        guard result.didMatch else { continue }
 
-                    // For each matched fragment, map its NSRange (in `recognized`)
-                    // to a String.Range and ask Vision for the precise bounding box.
-                    // Fall back to the full observation box if Vision can't provide one.
-                    var addedObsBox = false
-                    for match in result.matches {
-                        if let stringRange = Range(match.nsRange, in: recognized),
-                           let box = try? candidate.boundingBox(for: stringRange) {
-                            sensitiveRects.append(RedactionRect(rect: box.boundingBox, type: match.type))
-                        } else if !addedObsBox {
-                            sensitiveRects.append(RedactionRect(rect: obs.boundingBox, type: match.type))
-                            addedObsBox = true
+                        // For each matched fragment, map its NSRange (in `recognized`)
+                        // to a String.Range and ask Vision for the precise bounding box.
+                        // Fall back to the full observation box if Vision can't provide one.
+                        var addedObsBox = false
+                        for match in result.matches {
+                            if let stringRange = Range(match.nsRange, in: recognized),
+                               let box = try? candidate.boundingBox(for: stringRange) {
+                                sensitiveRects.append(RedactionRect(rect: box.boundingBox, type: match.type))
+                            } else if !addedObsBox {
+                                sensitiveRects.append(RedactionRect(rect: obs.boundingBox, type: match.type))
+                                addedObsBox = true
+                            }
                         }
                     }
-                }
 
-                sensitiveRects.append(contentsOf: self.detectMultilineTokenRects(in: recognizedLines))
-                if self.filter.enabledTypes.contains(.password) {
-                    sensitiveRects.append(contentsOf: self.detectPasswordLabelValueRects(in: recognizedLines))
+                    sensitiveRects.append(contentsOf: self.detectMultilineTokenRects(in: recognizedLines))
+                    if self.filter.enabledTypes.contains(.password) {
+                        sensitiveRects.append(contentsOf: self.detectPasswordLabelValueRects(in: recognizedLines))
+                    }
                 }
+                request.recognitionLevel = .accurate
+                request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+                request.usesLanguageCorrection = false // faster; content accuracy less important here
+
+                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                try? handler.perform([request])
+                completion(sensitiveRects)
             }
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-            request.usesLanguageCorrection = false // faster; content accuracy less important here
-
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            try? handler.perform([request])
-            completion(sensitiveRects)
         }
     }
 
@@ -268,59 +265,49 @@ final class ImagePrivacyMasker {
 
     // MARK: – Draw redaction rectangles
 
-    private func applyMask(to cgImage: CGImage, rects: [RedactionRect]) -> NSImage? {
-        guard !rects.isEmpty else {
-            // Nothing to mask — return original wrapped in NSImage
-            return NSImage(cgImage: cgImage, size: .zero)
+    private func applyMask(to cgImage: CGImage, rects: [RedactionRect]) -> CGImage? {
+        return autoreleasepool {
+            guard !rects.isEmpty else {
+                return cgImage
+            }
+
+            let width  = cgImage.width
+            let height = cgImage.height
+
+            // Force a known-good 32-bit BGRA layout. Reusing the source image's
+            // bitmapInfo can fail on uncommon screenshot color spaces (e.g. P3,
+            // 16-bit). If the redaction context can't be created, fail closed —
+            // returning nil signals upstream NOT to fall back to the original image.
+            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
+                | CGImageAlphaInfo.premultipliedFirst.rawValue
+            guard let ctx = CGContext(
+                data: nil,
+                width: width, height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo
+            ) else { return nil }
+
+            // Draw original image.
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+            // Vision bounding boxes use normalized coordinates with origin at bottom-left.
+            // Core Graphics also has origin at bottom-left, so only scale is needed.
+            for redaction in rects {
+                let normRect = redaction.rect
+                let pixelRect = CGRect(
+                    x: normRect.minX * CGFloat(width)  - padding,
+                    y: normRect.minY * CGFloat(height) - padding,
+                    width:  normRect.width  * CGFloat(width)  + padding * 2,
+                    height: normRect.height * CGFloat(height) + padding * 2
+                ).intersection(CGRect(x: 0, y: 0, width: width, height: height))
+
+                ctx.setFillColor(redaction.type.redactionColor.cgColor)
+                ctx.fill(pixelRect)
+            }
+
+            return ctx.makeImage()
         }
-
-        let width  = cgImage.width
-        let height = cgImage.height
-
-        // Force a known-good 32-bit BGRA layout. Reusing the source image's
-        // bitmapInfo can fail on uncommon screenshot color spaces (e.g. P3,
-        // 16-bit). If the redaction context can't be created, fail closed —
-        // returning nil signals upstream NOT to fall back to the original image.
-        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
-            | CGImageAlphaInfo.premultipliedFirst.rawValue
-        guard let ctx = CGContext(
-            data: nil,
-            width: width, height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: bitmapInfo
-        ) else { return nil }
-
-        // Draw original image.
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-        // Vision bounding boxes use normalized coordinates with origin at bottom-left.
-        // Core Graphics also has origin at bottom-left, so only scale is needed.
-        for redaction in rects {
-            let normRect = redaction.rect
-            let pixelRect = CGRect(
-                x: normRect.minX * CGFloat(width)  - padding,
-                y: normRect.minY * CGFloat(height) - padding,
-                width:  normRect.width  * CGFloat(width)  + padding * 2,
-                height: normRect.height * CGFloat(height) + padding * 2
-            ).intersection(CGRect(x: 0, y: 0, width: width, height: height))
-
-            ctx.setFillColor(redaction.type.redactionColor.cgColor)
-            ctx.fill(pixelRect)
-        }
-
-        guard let maskedCG = ctx.makeImage() else { return nil }
-        return NSImage(cgImage: maskedCG, size: NSSize(width: width, height: height))
-    }
-}
-
-// MARK: – NSImage helper
-
-private extension NSImage {
-    var cgImage: CGImage? {
-        guard let data = tiffRepresentation,
-              let rep  = NSBitmapImageRep(data: data) else { return nil }
-        return rep.cgImage
     }
 }
