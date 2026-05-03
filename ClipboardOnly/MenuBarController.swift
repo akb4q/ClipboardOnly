@@ -81,6 +81,11 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private let shortcutArea:   String = "⌘⇧4"
     private let shortcutScreen: String = "⌘⇧3"
 
+    private struct LoadedScreenshotImage {
+        let cgImage: CGImage
+        let retainedData: Data
+    }
+
     private static let screencaptureDomain = "com.apple.screencapture"
     private static let interceptPath = FileManager.default
         .homeDirectoryForCurrentUser
@@ -479,25 +484,31 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     // MARK: – OCR (Vision framework)
 
-    private func performOCR(on cgImage: CGImage, completion: @escaping (String?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
+    private func performOCR(
+        on cgImage: CGImage,
+        retainedData: Data? = nil,
+        completion: @escaping (String?) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async { [retainedData] in
             autoreleasepool {
-                let request = VNRecognizeTextRequest { request, error in
-                    guard error == nil,
-                          let observations = request.results as? [VNRecognizedTextObservation] else {
-                        completion(nil)
-                        return
+                withExtendedLifetime(retainedData) {
+                    let request = VNRecognizeTextRequest { request, error in
+                        guard error == nil,
+                              let observations = request.results as? [VNRecognizedTextObservation] else {
+                            completion(nil)
+                            return
+                        }
+                        let text = observations.compactMap { $0.topCandidates(1).first?.string }
+                            .joined(separator: "\n")
+                        completion(text.isEmpty ? nil : text)
                     }
-                    let text = observations.compactMap { $0.topCandidates(1).first?.string }
-                        .joined(separator: "\n")
-                    completion(text.isEmpty ? nil : text)
-                }
-                request.recognitionLevel = .accurate
-                request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-                request.usesLanguageCorrection = true
+                    request.recognitionLevel = .accurate
+                    request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+                    request.usesLanguageCorrection = true
 
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                try? handler.perform([request])
+                    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                    try? handler.perform([request])
+                }
             }
         }
     }
@@ -532,25 +543,13 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    private static func decodedCopy(_ cgImage: CGImage) -> CGImage? {
+    private static func loadedScreenshotImage(from url: URL) -> LoadedScreenshotImage? {
         return autoreleasepool {
-            let width = cgImage.width
-            let height = cgImage.height
-            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
-                | CGImageAlphaInfo.premultipliedFirst.rawValue
-            guard let ctx = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: bitmapInfo
-            ) else { return nil }
-            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
-            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return ctx.makeImage()
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            let options = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithData(data as CFData, options),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, options) else { return nil }
+            return LoadedScreenshotImage(cgImage: cgImage, retainedData: data)
         }
     }
 
@@ -610,36 +609,42 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    private func writeImageToClipboard(_ cgImage: CGImage, recognizedText: String? = nil) -> Int? {
-        return autoreleasepool {
-            // Resize down to LLM-friendly dimensions before any encoding. Privacy
-            // mask already ran on the full-resolution image (best OCR), so OCR-text
-            // accuracy is preserved; only the bytes that hit the clipboard / cache
-            // file are smaller.
-            let outImage = Self.resizedForLLM(cgImage)
-            guard let pngData = Self.pngData(from: outImage) else { return nil }
+    private func writeImageToClipboard(
+        _ cgImage: CGImage,
+        retainedData: Data? = nil,
+        recognizedText: String? = nil
+    ) -> Int? {
+        return withExtendedLifetime(retainedData) {
+            autoreleasepool {
+                // Resize down to LLM-friendly dimensions before any encoding. Privacy
+                // mask already ran on the full-resolution image (best OCR), so OCR-text
+                // accuracy is preserved; only the bytes that hit the clipboard / cache
+                // file are smaller.
+                let outImage = Self.resizedForLLM(cgImage)
+                guard let pngData = Self.pngData(from: outImage) else { return nil }
 
-            // Roll the on-disk cache for "paste as path" mode. Always clear the
-            // previous file first; only re-create it when path mode is on.
-            ClipboardImageCache.clear()
+                // Roll the on-disk cache for "paste as path" mode. Always clear the
+                // previous file first; only re-create it when path mode is on.
+                ClipboardImageCache.clear()
 
-            let item = NSPasteboardItem()
-            item.setData(pngData, forType: .png)
+                let item = NSPasteboardItem()
+                item.setData(pngData, forType: .png)
 
-            if pasteAsPathEnabled, let cachedURL = ClipboardImageCache.write(pngData) {
-                // Path mode wins over OCR text for the plain-text slot — terminals
-                // need an absolute path on Cmd+V. OCR text is still kept in
-                // lastOCRText and surfaced via the menu preview.
-                item.setString(cachedURL.absoluteString, forType: .fileURL)
-                item.setString(cachedURL.path, forType: .string)
-            } else if let recognizedText, !recognizedText.isEmpty {
-                item.setString(recognizedText, forType: .string)
+                if pasteAsPathEnabled, let cachedURL = ClipboardImageCache.write(pngData) {
+                    // Path mode wins over OCR text for the plain-text slot — terminals
+                    // need an absolute path on Cmd+V. OCR text is still kept in
+                    // lastOCRText and surfaced via the menu preview.
+                    item.setString(cachedURL.absoluteString, forType: .fileURL)
+                    item.setString(cachedURL.path, forType: .string)
+                } else if let recognizedText, !recognizedText.isEmpty {
+                    item.setString(recognizedText, forType: .string)
+                }
+
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                guard pb.writeObjects([item]) else { return nil }
+                return pb.changeCount
             }
-
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            guard pb.writeObjects([item]) else { return nil }
-            return pb.changeCount
         }
     }
 
@@ -650,8 +655,10 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         return pb.changeCount
     }
 
-    private func showManualOCRPanel(for image: CGImage, changeCount: Int) {
-        manualOCRImage = Self.thumbnailImage(from: image)
+    private func showManualOCRPanel(for image: CGImage, retainedData: Data? = nil, changeCount: Int) {
+        manualOCRImage = withExtendedLifetime(retainedData) {
+            Self.thumbnailImage(from: image)
+        }
         manualOCRChangeCount = changeCount
 
         if manualOCRPanelController == nil {
@@ -758,14 +765,18 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    private func startOCRForClipboardImage(_ image: CGImage, sourceChangeCount: Int) {
+    private func startOCRForClipboardImage(
+        _ image: CGImage,
+        retainedData: Data? = nil,
+        sourceChangeCount: Int
+    ) {
         guard autoOCREnabled else { return }
 
         lastOCRText = nil
         ocrInFlightChangeCount = sourceChangeCount
         refreshMenuDisplay()
 
-        performOCR(on: image) { [weak self] text in
+        performOCR(on: image, retainedData: retainedData) { [weak self] text in
             Task { @MainActor in
                 guard let self else { return }
                 guard self.ocrInFlightChangeCount == sourceChangeCount else { return }
@@ -844,14 +855,15 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     notify(L10n.str(.notifError), error.localizedDescription)
                 }
             } else {
-                let options = [kCGImageSourceShouldCache: false] as CFDictionary
-                guard let source = CGImageSourceCreateWithURL(url as CFURL, options),
-                      let sourceImage = CGImageSourceCreateImageAtIndex(source, 0, options),
-                      let image = Self.decodedCopy(sourceImage) else { return }
+                guard let image = Self.loadedScreenshotImage(from: url) else { return }
                 try? FileManager.default.removeItem(at: url)
 
                 if privacyFilterEnabled {
-                    masker.mask(image) { [weak self] maskedImage in
+                    masker.mask(
+                        image.cgImage,
+                        retainedData: image.retainedData,
+                        maxOutputLongEdge: Self.llmMaxLongEdge
+                    ) { [weak self] maskedImage in
                         autoreleasepool {
                             guard let self else { return }
                             guard let maskedImage else {
@@ -860,11 +872,15 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                                 self.notify(L10n.str(.notifError), L10n.str(.notifNoFile))
                                 return
                             }
-                            self.writeAndHandleImage(maskedImage)
+                            self.writeAndHandleImage(
+                                maskedImage,
+                                ocrImage: image.cgImage,
+                                ocrRetainedData: image.retainedData
+                            )
                         }
                     }
                 } else {
-                    writeAndHandleImage(image)
+                    writeAndHandleImage(image.cgImage, retainedData: image.retainedData)
                 }
             }
         } else {
@@ -878,8 +894,13 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
     }
 
-    private func writeAndHandleImage(_ image: CGImage) {
-        guard let newChangeCount = writeImageToClipboard(image) else {
+    private func writeAndHandleImage(
+        _ image: CGImage,
+        retainedData: Data? = nil,
+        ocrImage: CGImage? = nil,
+        ocrRetainedData: Data? = nil
+    ) {
+        guard let newChangeCount = writeImageToClipboard(image, retainedData: retainedData) else {
             notify(L10n.str(.notifError), L10n.str(.notifNoFile))
             return
         }
@@ -887,10 +908,14 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         lastChangeCount = newChangeCount
         if autoOCREnabled {
             dismissManualOCRPanel()
-            startOCRForClipboardImage(image, sourceChangeCount: newChangeCount)
+            startOCRForClipboardImage(
+                ocrImage ?? image,
+                retainedData: ocrRetainedData ?? retainedData,
+                sourceChangeCount: newChangeCount
+            )
         } else {
             resetOCRState()
-            showManualOCRPanel(for: image, changeCount: newChangeCount)
+            showManualOCRPanel(for: image, retainedData: retainedData, changeCount: newChangeCount)
             refreshMenuDisplay()
         }
         notify(L10n.str(.notifCopied), L10n.str(.notifNoFile))
