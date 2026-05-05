@@ -1198,7 +1198,7 @@ private final class OCRQuickActionPanelController: NSObject {
 
         panel.isFloatingPanel = true
         panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .ignoresCycle]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -1225,6 +1225,7 @@ private final class OCRQuickActionPanelController: NSObject {
         panel.setContentSize(panelSize)
         contentView.frame = NSRect(origin: .zero, size: panelSize)
 
+        panel.orderOut(nil)
         positionPanel()
         let targetFrame = panel.frame
         var startFrame = targetFrame
@@ -1244,17 +1245,7 @@ private final class OCRQuickActionPanelController: NSObject {
     }
 
     func close() {
-        let currentFrame = panel.frame
-        var endFrame = currentFrame
-        endFrame.origin.x += currentFrame.width + 40
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            self.panel.animator().setFrame(endFrame, display: true)
-        }, completionHandler: { [weak self] in
-            self?.panel.orderOut(nil)
-            self?.panel.setFrame(currentFrame, display: false)
-        })
+        panel.orderOut(nil)
     }
 
     private func positionPanel() {
