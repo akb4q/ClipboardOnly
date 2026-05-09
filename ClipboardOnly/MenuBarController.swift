@@ -11,10 +11,72 @@ import Vision
 private final class ClickableMenuItemView: NSView {
     weak var target: AnyObject?
     var action: Selector?
+    var highlightBackgroundColor: NSColor = .selectedMenuItemColor
+    var highlightForegroundColor: NSColor = .selectedMenuItemTextColor
+    private var trackingArea: NSTrackingArea?
+    private var textFields: [NSTextField] = []
+    private var imageViews: [(view: NSImageView, normalColor: NSColor)] = []
+    private var isHighlighted = false {
+        didSet { updateHighlightAppearance() }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+    }
+
+    func registerHighlightText(_ textField: NSTextField) {
+        textFields.append(textField)
+        textField.textColor = isHighlighted ? highlightForegroundColor : .labelColor
+    }
+
+    func registerHighlightImage(_ imageView: NSImageView, normalColor: NSColor = .secondaryLabelColor) {
+        imageViews.append((imageView, normalColor))
+        imageView.contentTintColor = isHighlighted ? highlightForegroundColor : normalColor
+    }
+
+    override func updateTrackingAreas() {
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHighlighted = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHighlighted = false
+    }
 
     override func mouseDown(with event: NSEvent) {
+        isHighlighted = true
         guard let target, let action else { return }
         NSApp.sendAction(action, to: target, from: self)
+    }
+
+    private func updateHighlightAppearance() {
+        layer?.backgroundColor = isHighlighted ? highlightBackgroundColor.cgColor : NSColor.clear.cgColor
+        textFields.forEach { $0.textColor = isHighlighted ? highlightForegroundColor : .labelColor }
+        imageViews.forEach { $0.view.contentTintColor = isHighlighted ? highlightForegroundColor : $0.normalColor }
     }
 }
 
@@ -1038,25 +1100,17 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         let container = ClickableMenuItemView(frame: NSRect(x: 0, y: 0, width: 252, height: 28))
         container.target = self
         container.action = #selector(sendClipboardToObsidian)
+        let obsidianPurple = NSColor(calibratedRed: 0.49, green: 0.23, blue: 0.93, alpha: 1)
+        container.highlightBackgroundColor = .clear
+        container.highlightForegroundColor = obsidianPurple
 
         let titleLabel = NSTextField(labelWithString: L10n.str(.obsidianSend))
-        titleLabel.frame = NSRect(x: 18, y: 4, width: 198, height: 20)
+        titleLabel.frame = NSRect(x: 22, y: 4, width: 220, height: 20)
         titleLabel.font = NSFont.menuFont(ofSize: 0)
         titleLabel.textColor = .labelColor
         titleLabel.lineBreakMode = .byTruncatingTail
         container.addSubview(titleLabel)
-
-        if let icon = NSImage(
-            systemSymbolName: "square.and.arrow.up",
-            accessibilityDescription: L10n.str(.obsidianSend)
-        ) {
-            icon.isTemplate = true
-            let iconView = NSImageView(frame: NSRect(x: 224, y: 6, width: 16, height: 16))
-            iconView.image = icon
-            iconView.imageScaling = .scaleProportionallyDown
-            iconView.contentTintColor = .secondaryLabelColor
-            container.addSubview(iconView)
-        }
+        container.registerHighlightText(titleLabel)
 
         let item = NSMenuItem()
         item.view = container
