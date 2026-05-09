@@ -29,6 +29,8 @@ enum L10n {
         case privacyFilterPhone, privacyFilterIDCard, privacyFilterIP
         case privacyFilterPassword
         case pasteAsPath, pasteAsPathHint
+        case obsidianSend, obsidianChooseVault, obsidianVault, obsidianOpenAfterSave
+        case obsidianSaved, obsidianUnsupported, obsidianNoVault
     }
 
     private static let strings: [String: [Key: String]] = [
@@ -67,6 +69,13 @@ enum L10n {
             .privacyFilterPassword:  "密码/凭据",
             .pasteAsPath:     "粘贴为文件路径（用于 CLI）",
             .pasteAsPathHint: "截图额外缓存为文件，剪贴板同时携带绝对路径，方便 Claude Code 等终端工具读取",
+            .obsidianSend:    "发送剪贴板到 Obsidian",
+            .obsidianChooseVault: "选择 Obsidian Vault…",
+            .obsidianVault:   "Obsidian Vault: %@",
+            .obsidianOpenAfterSave: "写入后打开 Obsidian",
+            .obsidianSaved:   "已写入 Obsidian",
+            .obsidianUnsupported: "剪贴板没有可写入的文字或图片",
+            .obsidianNoVault: "请先选择 Obsidian Vault",
         ],
         "en": [
             .appName:        "ClipboardOnly",
@@ -103,6 +112,13 @@ enum L10n {
             .privacyFilterPassword:  "Passwords",
             .pasteAsPath:     "Paste as File Path (for CLI)",
             .pasteAsPathHint: "Caches the screenshot to a file and adds its absolute path to the clipboard, so terminals like Claude Code can read it.",
+            .obsidianSend:    "Send Clipboard to Obsidian",
+            .obsidianChooseVault: "Choose Obsidian Vault…",
+            .obsidianVault:   "Obsidian Vault: %@",
+            .obsidianOpenAfterSave: "Open in Obsidian after save",
+            .obsidianSaved:   "Saved to Obsidian",
+            .obsidianUnsupported: "Clipboard has no supported text or image",
+            .obsidianNoVault: "Choose an Obsidian Vault first",
         ],
     ]
 }

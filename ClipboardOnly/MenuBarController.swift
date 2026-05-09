@@ -260,6 +260,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         addClipboardPreview(to: menu)
 
         menu.addItem(.separator())
+        addObsidianItems(to: menu)
 
         let loginItem = NSMenuItem(
             title: L10n.str(.launchAtLogin),
@@ -929,6 +930,46 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func togglePasteAsPath()   { pasteAsPathEnabled.toggle() }
     @objc private func quitApp()             { quit() }
 
+    @objc private func chooseObsidianVault() {
+        let panel = NSOpenPanel()
+        panel.title = L10n.str(.obsidianChooseVault)
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+
+        if let current = ObsidianVaultWriter.vaultURL {
+            panel.directoryURL = current
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        ObsidianVaultWriter.vaultURL = url
+        refreshMenuDisplay()
+    }
+
+    @objc private func sendClipboardToObsidian() {
+        do {
+            let result = try ObsidianVaultWriter().writeCurrentClipboard()
+            notify(L10n.str(.obsidianSaved), result.noteRelativePath)
+
+            if ObsidianVaultWriter.openAfterSave,
+               let url = result.obsidianOpenURL {
+                NSWorkspace.shared.open(url)
+            }
+        } catch ObsidianVaultWriter.WriteError.noVault {
+            notify(L10n.str(.notifError), L10n.str(.obsidianNoVault))
+        } catch ObsidianVaultWriter.WriteError.unsupportedClipboard {
+            notify(L10n.str(.notifError), L10n.str(.obsidianUnsupported))
+        } catch {
+            notify(L10n.str(.notifError), error.localizedDescription)
+        }
+    }
+
+    @objc private func toggleOpenObsidianAfterSave() {
+        ObsidianVaultWriter.openAfterSave.toggle()
+        refreshMenuDisplay()
+    }
+
     @objc private func togglePrivacyFilterButton(_ sender: NSButton) {
         suppressMenuRebuild = true
         privacyFilterEnabled = sender.state == .on
@@ -959,6 +1000,68 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     // MARK: – Menu item builders
+
+    private func addObsidianItems(to menu: NSMenu) {
+        menu.addItem(makeObsidianSendItem())
+
+        let chooseItem = NSMenuItem(
+            title: L10n.str(.obsidianChooseVault),
+            action: #selector(chooseObsidianVault),
+            keyEquivalent: ""
+        )
+        chooseItem.target = self
+        menu.addItem(chooseItem)
+
+        if let vaultURL = ObsidianVaultWriter.vaultURL {
+            let vaultItem = NSMenuItem(
+                title: String(format: L10n.str(.obsidianVault), vaultURL.lastPathComponent),
+                action: nil,
+                keyEquivalent: ""
+            )
+            vaultItem.isEnabled = false
+            menu.addItem(vaultItem)
+        }
+
+        let openItem = NSMenuItem(
+            title: L10n.str(.obsidianOpenAfterSave),
+            action: #selector(toggleOpenObsidianAfterSave),
+            keyEquivalent: ""
+        )
+        openItem.state = ObsidianVaultWriter.openAfterSave ? .on : .off
+        openItem.target = self
+        menu.addItem(openItem)
+
+        menu.addItem(.separator())
+    }
+
+    private func makeObsidianSendItem() -> NSMenuItem {
+        let container = ClickableMenuItemView(frame: NSRect(x: 0, y: 0, width: 252, height: 28))
+        container.target = self
+        container.action = #selector(sendClipboardToObsidian)
+
+        let titleLabel = NSTextField(labelWithString: L10n.str(.obsidianSend))
+        titleLabel.frame = NSRect(x: 18, y: 4, width: 198, height: 20)
+        titleLabel.font = NSFont.menuFont(ofSize: 0)
+        titleLabel.textColor = .labelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        container.addSubview(titleLabel)
+
+        if let icon = NSImage(
+            systemSymbolName: "square.and.arrow.up",
+            accessibilityDescription: L10n.str(.obsidianSend)
+        ) {
+            icon.isTemplate = true
+            let iconView = NSImageView(frame: NSRect(x: 224, y: 6, width: 16, height: 16))
+            iconView.image = icon
+            iconView.imageScaling = .scaleProportionallyDown
+            iconView.contentTintColor = .secondaryLabelColor
+            container.addSubview(iconView)
+        }
+
+        let item = NSMenuItem()
+        item.view = container
+        return item
+    }
 
     private func makePrivacyDisclosureItem() -> NSMenuItem {
         let arrowView = NSImageView(frame: NSRect(x: 8, y: 12, width: 8, height: 8))
@@ -1176,6 +1279,268 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             UNNotificationRequest(identifier: UUID().uuidString,
                                   content: content, trigger: nil))
     }
+}
+
+
+private struct ObsidianClipResult {
+    let noteRelativePath: String
+    let noteURL: URL
+
+    var obsidianOpenURL: URL? {
+        guard let encodedPath = noteURL.path.addingPercentEncoding(
+            withAllowedCharacters: .obsidianQueryValueAllowed
+        ) else { return nil }
+        return URL(string: "obsidian://open?path=\(encodedPath)")
+    }
+}
+
+private struct ObsidianVaultWriter {
+    enum WriteError: LocalizedError {
+        case noVault
+        case unsupportedClipboard
+        case imageEncodeFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .noVault:
+                return L10n.str(.obsidianNoVault)
+            case .unsupportedClipboard:
+                return L10n.str(.obsidianUnsupported)
+            case .imageEncodeFailed:
+                return "Unable to encode clipboard image as PNG"
+            }
+        }
+    }
+
+    private static let vaultPathKey = "obsidianVaultPath"
+    private static let inboxFolderKey = "obsidianInboxFolder"
+    private static let openAfterSaveKey = "obsidianOpenAfterSave"
+    private static let defaultInboxFolder = "Inbox/ClipboardOnly"
+
+    static var vaultURL: URL? {
+        get {
+            guard let path = UserDefaults.standard.string(forKey: vaultPathKey),
+                  !path.isEmpty else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(newValue.path, forKey: vaultPathKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: vaultPathKey)
+            }
+        }
+    }
+
+    static var openAfterSave: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: openAfterSaveKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: openAfterSaveKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: openAfterSaveKey)
+        }
+    }
+
+    private var inboxFolder: String {
+        UserDefaults.standard.string(forKey: Self.inboxFolderKey)
+            ?? Self.defaultInboxFolder
+    }
+
+    func writeCurrentClipboard(_ pasteboard: NSPasteboard = .general) throws -> ObsidianClipResult {
+        guard let vaultURL = Self.vaultURL else { throw WriteError.noVault }
+
+        if let imageData = Self.clipboardPNGData(from: pasteboard) {
+            return try writeImageNote(pngData: imageData, vaultURL: vaultURL)
+        }
+
+        if Self.containsFileURL(in: pasteboard) {
+            throw WriteError.unsupportedClipboard
+        }
+
+        if let text = pasteboard.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty {
+            return try writeTextNote(text, vaultURL: vaultURL)
+        }
+
+        throw WriteError.unsupportedClipboard
+    }
+
+    private func writeTextNote(_ text: String, vaultURL: URL) throws -> ObsidianClipResult {
+        let title = Self.titleFromText(text)
+        let noteDirectory = vaultURL.appendingPathComponent(inboxFolder, isDirectory: true)
+        try FileManager.default.createDirectory(at: noteDirectory, withIntermediateDirectories: true)
+
+        let noteURL = Self.uniqueURL(in: noteDirectory, baseName: title, extension: "md")
+        let markdown = """
+        ---
+        title: "\(Self.yamlEscaped(title))"
+        source: ClipboardOnly
+        created: \(Self.frontmatterDateString())
+        type: clipboard
+        ---
+
+        \(text)
+        """
+
+        try markdown.write(to: noteURL, atomically: true, encoding: .utf8)
+        return result(for: noteURL, vaultURL: vaultURL)
+    }
+
+    private func writeImageNote(pngData: Data, vaultURL: URL) throws -> ObsidianClipResult {
+        let title = "Clipboard Image - \(Self.filenameDateString())"
+        let noteDirectory = vaultURL.appendingPathComponent(inboxFolder, isDirectory: true)
+        try FileManager.default.createDirectory(at: noteDirectory, withIntermediateDirectories: true)
+
+        let imageURL = Self.uniqueURL(in: noteDirectory, baseName: title, extension: "png")
+        try pngData.write(to: imageURL, options: .atomic)
+
+        let noteURL = Self.uniqueURL(in: noteDirectory, baseName: title, extension: "md")
+        let markdown = """
+        ---
+        title: "\(Self.yamlEscaped(title))"
+        source: ClipboardOnly
+        created: \(Self.frontmatterDateString())
+        type: image
+        ---
+
+        ![[\(imageURL.lastPathComponent)]]
+        """
+
+        try markdown.write(to: noteURL, atomically: true, encoding: .utf8)
+        return result(for: noteURL, vaultURL: vaultURL)
+    }
+
+    private func result(for noteURL: URL, vaultURL: URL) -> ObsidianClipResult {
+        ObsidianClipResult(
+            noteRelativePath: Self.relativePath(for: noteURL, in: vaultURL),
+            noteURL: noteURL
+        )
+    }
+
+    private static func clipboardPNGData(from pasteboard: NSPasteboard) -> Data? {
+        return autoreleasepool {
+            if let pngData = pasteboard.data(forType: .png),
+               isDecodableImageData(pngData) {
+                return pngData
+            }
+
+            guard let tiffData = pasteboard.data(forType: .tiff),
+                  let source = CGImageSourceCreateWithData(tiffData as CFData, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                return nil
+            }
+            return pngData(from: cgImage)
+        }
+    }
+
+    private static func containsFileURL(in pasteboard: NSPasteboard) -> Bool {
+        let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        return pasteboard.types?.contains(.fileURL) == true
+            || pasteboard.types?.contains(filenameType) == true
+    }
+
+    private static func isDecodableImageData(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return false
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil) != nil
+    }
+
+    private static func pngData(from cgImage: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+
+    private static func uniqueURL(in directory: URL, baseName: String, extension ext: String) -> URL {
+        let safeBaseName = sanitizedFilename(baseName)
+        var candidate = directory.appendingPathComponent(safeBaseName).appendingPathExtension(ext)
+        var counter = 2
+
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory
+                .appendingPathComponent("\(safeBaseName)-\(counter)")
+                .appendingPathExtension(ext)
+            counter += 1
+        }
+
+        return candidate
+    }
+
+    private static func titleFromText(_ text: String) -> String {
+        let firstLine = text
+            .components(separatedBy: .newlines)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
+        let collapsed = firstLine
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let prefix = String(collapsed.prefix(50)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return prefix.isEmpty ? "Clipboard - \(filenameDateString())" : prefix
+    }
+
+    private static func sanitizedFilename(_ name: String) -> String {
+        let invalid = CharacterSet(charactersIn: "/:\\?%*|\"<>")
+            .union(.newlines)
+            .union(.controlCharacters)
+        let cleaned = name
+            .components(separatedBy: invalid)
+            .joined(separator: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return cleaned.isEmpty ? "Clipboard - \(filenameDateString())" : String(cleaned.prefix(80))
+    }
+
+    private static func yamlEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
+
+    private static func relativePath(for url: URL, in vaultURL: URL) -> String {
+        let vaultPath = vaultURL.standardizedFileURL.path
+        let filePath = url.standardizedFileURL.path
+        guard filePath.hasPrefix(vaultPath + "/") else {
+            return url.lastPathComponent
+        }
+        return String(filePath.dropFirst(vaultPath.count + 1))
+    }
+
+    private static func frontmatterDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.string(from: Date())
+    }
+
+    private static func filenameDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HHmmss"
+        return formatter.string(from: Date())
+    }
+}
+
+
+private extension CharacterSet {
+    static let obsidianQueryValueAllowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 }
 
 
