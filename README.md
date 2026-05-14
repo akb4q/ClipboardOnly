@@ -32,6 +32,14 @@ A small tool born from a simple frustration: every screenshot automatically crea
 - **Launch at login** toggle.
 - **Bilingual UI** — automatically follows system language (中文 / English).
 
+## Notes on macOS 26.4+
+
+Starting with macOS 26.4, `screencapture` changed how it writes screenshots: the image is first saved to a dot-prefixed temp file (e.g. `.截屏….png`) and only renamed (dropping the leading dot) up to **~55 seconds later**, after a batch of metadata / Biome work finishes. The original "intercept the file the moment it lands and delete it" approach in v1.2.7 raced this rename and surfaced the system dialog *"无法保存截屏。不能将文件写入到预期目的位置。"*
+
+From **v1.2.8** onward, ClipboardOnly reads the dotfile but leaves it on disk for `screencapture` to finish with, then silently cleans up the renamed file. As a side-effect the temp file lives in `~/.clipboard_only/intercept/` for up to a minute per screenshot — it's in a hidden directory, invisible in Finder, and removed automatically once the rename completes. The user-facing promise ("no leftover screenshot files") is unchanged.
+
+> macOS 26.4 起，`screencapture` 改了截图的写盘方式：先写一个点开头的临时文件，最长等约 **55 秒** 才 rename 去掉那个点。v1.2.7 的拦截在 rename 之前就把文件吃掉了，导致系统弹"无法保存截屏"。v1.2.8 改成读取但不删除点文件，让系统的 rename 顺利完成后再静默清理。副作用是临时文件会在 `~/.clipboard_only/intercept/` 隐藏目录里停留约一分钟，Finder 不可见，rename 完成后自动消失——"桌面不留文件"这一承诺不受影响。
+
 ## Install
 
 Grab the latest `.zip` from the [Releases](https://github.com/akb4q/ClipboardOnly/releases) page, unzip, and drag `ClipboardOnly.app` into `/Applications`.
