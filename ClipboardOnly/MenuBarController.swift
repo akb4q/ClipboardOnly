@@ -140,6 +140,34 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private var manualOCRPanelController: OCRQuickActionPanelController?
     private var pasteEventMonitor: Any?
     private var manualOCRClickMonitor: Any?
+
+    // `screencapture` on macOS 26.4+ writes the screenshot to a dot-prefixed
+    // temp file (e.g. ".截屏…png") and then performs ~55 seconds of metadata
+    // and Biome work before doing a final `rename` that drops the leading dot.
+    // We process the dotfile immediately (the file is fully written by the
+    // time it appears) but DON'T delete it — otherwise screencapture's later
+    // rename fails and the OS shows "无法保存截屏。不能将文件写入到预期目的位置。"
+    //
+    // Once the rename happens, FSEvents fires again for the non-dotfile name;
+    // we recognise it via `pendingDotfileBaseNames` and just clean up the
+    // file without re-running the whole pipeline.
+    private var pendingDotfileBaseNames: [String] = []
+    private static let pendingDotfileCap = 64
+
+    private func recordPendingDotfile(baseName: String) {
+        pendingDotfileBaseNames.append(baseName)
+        if pendingDotfileBaseNames.count > Self.pendingDotfileCap {
+            pendingDotfileBaseNames.removeFirst()
+        }
+    }
+
+    /// Returns true and removes the entry if `baseName` was the post-rename
+    /// target of a dotfile we already processed.
+    private func consumePendingDotfile(baseName: String) -> Bool {
+        guard let idx = pendingDotfileBaseNames.firstIndex(of: baseName) else { return false }
+        pendingDotfileBaseNames.remove(at: idx)
+        return true
+    }
     private let shortcutArea:   String = "⌘⇧4"
     private let shortcutScreen: String = "⌘⇧3"
 
@@ -718,16 +746,27 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         return pb.changeCount
     }
 
-    private func showManualOCRPanel(for image: CGImage, retainedData: Data? = nil, changeCount: Int) {
+    /// Show or refresh the floating OCR thumbnail panel.
+    ///
+    /// `changeCount` is optional so we can call this early — right after the
+    /// screenshot is decoded — to make the panel appear without waiting for the
+    /// (slower) privacy mask + 1568px resize + PNG encode + pasteboard write
+    /// pipeline to finish. The same function is called again once the pipeline
+    /// completes; the second call passes the real `changeCount` (which unlocks
+    /// the OCR button) and replaces the thumbnail with the post-mask image.
+    private func showManualOCRPanel(for image: CGImage, retainedData: Data? = nil, changeCount: Int? = nil) {
         manualOCRImage = withExtendedLifetime(retainedData) {
             Self.thumbnailImage(from: image)
         }
-        manualOCRChangeCount = changeCount
+        if let changeCount {
+            manualOCRChangeCount = changeCount
+        }
 
         if manualOCRPanelController == nil {
             manualOCRPanelController = OCRQuickActionPanelController(controller: self)
         }
         manualOCRPanelController?.show()
+        manualOCRPanelController?.refresh()
     }
 
     private func dismissManualOCRPanel() {
@@ -905,9 +944,23 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         guard resolved.hasPrefix(interceptRoot + "/") else { return }
 
         let ext = url.pathExtension.lowercased()
+        let lastComponent = url.lastPathComponent
+        let isDotfile = lastComponent.hasPrefix(".")
+        let nonDotName = isDotfile ? String(lastComponent.dropFirst()) : lastComponent
+
+        // Post-rename event for a dotfile we already processed: just clean up
+        // and bail. The pipeline (clipboard write, popup, mask) ran when the
+        // dotfile first appeared; the user has long since seen the result.
+        if !isDotfile, consumePendingDotfile(baseName: nonDotName) {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
 
         if clipboardMode {
             if ["mov", "mp4"].contains(ext) {
+                // Video recordings don't use the dotfile pattern (screencapture
+                // streams directly to the final name), so process as before.
+                if isDotfile { return } // defensive: shouldn't happen for mov/mp4
                 let dest = saveDirectory.appendingPathComponent(url.lastPathComponent)
                 do {
                     try FileManager.default.moveItem(at: url, to: dest)
@@ -919,7 +972,30 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 }
             } else {
                 guard let image = Self.loadedScreenshotImage(from: url) else { return }
-                try? FileManager.default.removeItem(at: url)
+
+                if isDotfile {
+                    // Leave the file in place so screencapture's rename (which
+                    // happens up to ~55s later on macOS 26.4+) can find it.
+                    // Mark the post-rename name so we'll quietly clean up the
+                    // resulting non-dotfile event.
+                    recordPendingDotfile(baseName: nonDotName)
+                } else {
+                    // Legitimate non-dotfile (e.g. user dropped a PNG into the
+                    // intercept dir, or pre-26.4 macOS): we own it, remove it.
+                    try? FileManager.default.removeItem(at: url)
+                }
+
+                // Show the floating thumbnail panel as soon as we have the
+                // decoded CGImage, without waiting for masking / resize / PNG
+                // encode / pasteboard write. The panel's OCR button stays
+                // inert until writeAndHandleImage commits a real changeCount.
+                // Auto-OCR mode skips this — it has its own (auto-dismissed)
+                // flow handled inside writeAndHandleImage.
+                if !autoOCREnabled {
+                    resetOCRState()
+                    showManualOCRPanel(for: image.cgImage, retainedData: image.retainedData)
+                    refreshMenuDisplay()
+                }
 
                 if privacyFilterEnabled {
                     masker.mask(
@@ -947,6 +1023,10 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 }
             }
         } else {
+            // Pass-through mode: defer dotfile entirely. Don't touch it —
+            // screencapture's rename will fire a non-dotfile event ~55s later
+            // and we'll relocate to `saveDirectory` then.
+            if isDotfile { return }
             let dest = saveDirectory.appendingPathComponent(url.lastPathComponent)
             do {
                 try FileManager.default.moveItem(at: url, to: dest)
@@ -964,6 +1044,10 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         ocrRetainedData: Data? = nil
     ) {
         guard let newChangeCount = writeImageToClipboard(image, retainedData: retainedData) else {
+            // The early-show path may have left the panel visible with the
+            // unmasked thumbnail. Dismiss it so the user isn't left with a
+            // stale popup pointing at a clipboard state that never happened.
+            if !autoOCREnabled { dismissManualOCRPanel() }
             notify(L10n.str(.notifError), L10n.str(.notifNoFile))
             return
         }
@@ -977,7 +1061,9 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 sourceChangeCount: newChangeCount
             )
         } else {
-            resetOCRState()
+            // Panel was already shown in handleNewFile with the raw thumbnail.
+            // Re-call to (a) replace the thumbnail with the post-mask image
+            // and (b) commit the real changeCount so OCR becomes actionable.
             showManualOCRPanel(for: image, retainedData: retainedData, changeCount: newChangeCount)
             refreshMenuDisplay()
         }
