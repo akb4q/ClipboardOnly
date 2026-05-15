@@ -29,6 +29,7 @@ enum L10n {
         case privacyFilterPhone, privacyFilterIDCard, privacyFilterIP
         case privacyFilterPassword
         case pasteAsPath, pasteAsPathHint
+        case llmEconomy, llmEconomyHint
         case obsidianSend, obsidianChooseVault, obsidianVault, obsidianOpenAfterSave
         case obsidianSaved, obsidianUnsupported, obsidianNoVault
     }
@@ -69,6 +70,8 @@ enum L10n {
             .privacyFilterPassword:  "密码/凭据",
             .pasteAsPath:     "粘贴为文件路径（用于 CLI）",
             .pasteAsPathHint: "截图额外缓存为文件，剪贴板同时携带绝对路径，方便 Claude Code 等终端工具读取",
+            .llmEconomy:      "省钱模式（图片压到 512px）",
+            .llmEconomyHint:  "把发送给 LLM 的截图长边压到 512 像素，token 成本降约 90%。适合已裁剪的文字截图；整屏或代码截图会变糊，那种情况请关闭。",
             .obsidianSend:    "发送剪贴板到 Obsidian",
             .obsidianChooseVault: "选择 Vault…",
             .obsidianVault:   "Obsidian Vault: %@",
@@ -112,6 +115,8 @@ enum L10n {
             .privacyFilterPassword:  "Passwords",
             .pasteAsPath:     "Paste as File Path (for CLI)",
             .pasteAsPathHint: "Caches the screenshot to a file and adds its absolute path to the clipboard, so terminals like Claude Code can read it.",
+            .llmEconomy:      "Economy Mode (downscale to 512px)",
+            .llmEconomyHint:  "Caps the LLM-bound screenshot at 512px long edge, cutting token cost ~90%. Good for cropped text screenshots; full-screen or code captures will blur — keep this off for those.",
             .obsidianSend:    "Send Clipboard to Obsidian",
             .obsidianChooseVault: "Choose Vault…",
             .obsidianVault:   "Obsidian Vault: %@",

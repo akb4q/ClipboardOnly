@@ -114,6 +114,12 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
             DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
         }
     }
+    @Published var llmEconomyEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(llmEconomyEnabled, forKey: "llmEconomyEnabled")
+            DispatchQueue.main.async { [weak self] in self?.rebuildMenu() }
+        }
+    }
     @Published private(set) var saveDirectory: URL
 
     // MARK: – Private state
@@ -137,6 +143,11 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private var ocrInFlightChangeCount: Int?
     private var manualOCRImage: NSImage?
     private var manualOCRChangeCount: Int?
+    /// Original full-resolution screenshot PNG bytes, retained while the
+    /// manual OCR panel is visible. Manual OCR decodes from this rather than
+    /// the clipboard image, so OCR accuracy is unaffected by economy-mode
+    /// downscaling (the clipboard image may be capped at 512px).
+    private var manualOCRSourceData: Data?
     private var manualOCRPanelController: OCRQuickActionPanelController?
     private var pasteEventMonitor: Any?
     private var manualOCRClickMonitor: Any?
@@ -234,6 +245,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         autoOCREnabled         = UserDefaults.standard.object(forKey: "autoOCREnabled") as? Bool ?? true
         privacyFilterEnabled   = UserDefaults.standard.object(forKey: "privacyFilterEnabled") as? Bool ?? true
         pasteAsPathEnabled     = UserDefaults.standard.bool(forKey: "pasteAsPathEnabled")
+        llmEconomyEnabled      = UserDefaults.standard.bool(forKey: "llmEconomyEnabled")
 
         let saved = originalLocation == Self.interceptPath.path
             ? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
@@ -331,6 +343,16 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         pathItem.target = self
         pathItem.toolTip = L10n.str(.pasteAsPathHint)
         menu.addItem(pathItem)
+
+        let economyItem = NSMenuItem(
+            title: L10n.str(.llmEconomy),
+            action: #selector(toggleLLMEconomy),
+            keyEquivalent: ""
+        )
+        economyItem.state = llmEconomyEnabled ? .on : .off
+        economyItem.target = self
+        economyItem.toolTip = L10n.str(.llmEconomyHint)
+        menu.addItem(economyItem)
 
         menu.addItem(makePrivacyDisclosureItem())
         if privacyFilterExpanded {
@@ -626,11 +648,19 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     /// server would do anyway — no additional quality loss vs sending the
     /// original — and slashes token cost (cost is proportional to pixel count).
     /// Skipped for images already within the cap.
-    private static let llmMaxLongEdge: CGFloat = 1568
+    private static let llmLongEdgeStandard: CGFloat = 1568
+    private static let llmLongEdgeEconomy:  CGFloat = 512
 
-    private static func resizedForLLM(_ cgImage: CGImage) -> CGImage {
+    /// Long-edge cap for the image written to the clipboard / path cache.
+    /// Economy mode trades fidelity for ~89% lower vision-token cost; see the
+    /// menu tooltip for when it's safe to use.
+    private var llmMaxLongEdge: CGFloat {
+        llmEconomyEnabled ? Self.llmLongEdgeEconomy : Self.llmLongEdgeStandard
+    }
+
+    private static func resizedForLLM(_ cgImage: CGImage, maxLongEdge: CGFloat) -> CGImage {
         return autoreleasepool {
-            resized(cgImage, maxLongEdge: llmMaxLongEdge) ?? cgImage
+            resized(cgImage, maxLongEdge: maxLongEdge) ?? cgImage
         }
     }
 
@@ -694,8 +724,12 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     private func currentClipboardCGImage() -> CGImage? {
         guard let pngData = NSPasteboard.general.data(forType: .png) else { return nil }
+        return Self.decodeCGImage(from: pngData)
+    }
+
+    private static func decodeCGImage(from data: Data) -> CGImage? {
         return autoreleasepool {
-            guard let source = CGImageSourceCreateWithData(pngData as CFData, nil) else { return nil }
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
             return CGImageSourceCreateImageAtIndex(source, 0, nil)
         }
     }
@@ -711,7 +745,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 // mask already ran on the full-resolution image (best OCR), so OCR-text
                 // accuracy is preserved; only the bytes that hit the clipboard / cache
                 // file are smaller.
-                let outImage = Self.resizedForLLM(cgImage)
+                let outImage = Self.resizedForLLM(cgImage, maxLongEdge: llmMaxLongEdge)
                 guard let pngData = Self.pngData(from: outImage) else { return nil }
 
                 // Roll the on-disk cache for "paste as path" mode. Always clear the
@@ -772,6 +806,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     private func dismissManualOCRPanel() {
         manualOCRImage = nil
         manualOCRChangeCount = nil
+        manualOCRSourceData = nil
         manualOCRPanelController?.close()
         manualOCRPanelController = nil
     }
@@ -804,8 +839,18 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     fileprivate func triggerManualOCR() {
-        guard let changeCount = manualOCRChangeCount,
-              let image = currentClipboardCGImage() else { return }
+        guard let changeCount = manualOCRChangeCount else { return }
+        // Prefer the retained full-resolution original so OCR accuracy is
+        // unaffected by economy-mode downscaling. Fall back to the clipboard
+        // image only if the original is somehow unavailable.
+        let image: CGImage
+        if let data = manualOCRSourceData, let original = Self.decodeCGImage(from: data) {
+            image = original
+        } else if let clip = currentClipboardCGImage() {
+            image = clip
+        } else {
+            return
+        }
         guard ocrInFlightChangeCount != changeCount else { return }
 
         lastOCRText = nil
@@ -993,6 +1038,10 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                 // flow handled inside writeAndHandleImage.
                 if !autoOCREnabled {
                     resetOCRState()
+                    // Retain the original PNG bytes so a later manual OCR runs
+                    // on full resolution, not the (possibly economy-shrunk)
+                    // clipboard image.
+                    manualOCRSourceData = image.retainedData
                     showManualOCRPanel(for: image.cgImage, retainedData: image.retainedData)
                     refreshMenuDisplay()
                 }
@@ -1001,7 +1050,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                     masker.mask(
                         image.cgImage,
                         retainedData: image.retainedData,
-                        maxOutputLongEdge: Self.llmMaxLongEdge
+                        maxOutputLongEdge: llmMaxLongEdge
                     ) { [weak self] maskedImage in
                         autoreleasepool {
                             guard let self else { return }
@@ -1076,6 +1125,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     @objc private func toggleAutoOCR()       { autoOCREnabled.toggle() }
     @objc private func togglePrivacyFilter() { privacyFilterEnabled.toggle() }
     @objc private func togglePasteAsPath()   { pasteAsPathEnabled.toggle() }
+    @objc private func toggleLLMEconomy()    { llmEconomyEnabled.toggle() }
     @objc private func quitApp()             { quit() }
 
     @objc private func chooseObsidianVault() {
@@ -1729,6 +1779,16 @@ private final class OCRQuickActionPanelController: NSObject {
         }
         panel.setContentSize(panelSize)
         contentView.frame = NSRect(origin: .zero, size: panelSize)
+
+        // If the panel is already on screen this is the post-pipeline
+        // content-update call (or a back-to-back screenshot reusing the
+        // same panel). Update in place and re-anchor, but do NOT replay the
+        // slide-in animation — replaying it on a visible panel is exactly
+        // the "flash" the user sees.
+        if panel.isVisible {
+            positionPanel()
+            return
+        }
 
         panel.orderOut(nil)
         positionPanel()
