@@ -23,7 +23,7 @@ A small tool born from a simple frustration: every screenshot automatically crea
   - 🟩 Phone Numbers
   - 🟪 ID Card Numbers
   - 🟨 IP Addresses
-  - 🟫 Passwords (`password: …`, `密码：…`)
+  - 🟫 Passwords (`password: …`)
 
   Matches in OCR text are replaced with placeholders (e.g. `[API_KEY]`); matches in screenshots are covered with per-type colored rectangles. A multi-line token heuristic handles long keys split across OCR lines.
 - **Manual OCR panel** — when auto-OCR is off, a small floating thumbnail lets you trigger OCR on demand.
@@ -35,7 +35,7 @@ A small tool born from a simple frustration: every screenshot automatically crea
 
 ## Notes on macOS 26.4+
 
-Starting with macOS 26.4, `screencapture` changed how it writes screenshots: the image is first saved to a dot-prefixed temp file (e.g. `.截屏….png`) and only renamed (dropping the leading dot) up to **~55 seconds later**, after a batch of metadata / Biome work finishes. The original "intercept the file the moment it lands and delete it" approach in v1.2.7 raced this rename and surfaced the system dialog *"无法保存截屏。不能将文件写入到预期目的位置。"*
+Starting with macOS 26.4, `screencapture` changed how it writes screenshots: the image is first saved to a dot-prefixed temp file (e.g. `.截屏….png`) and only renamed (dropping the leading dot) up to **~55 seconds later**, after a batch of metadata / Biome work finishes. The original "intercept the file the moment it lands and delete it" approach in v1.2.7 raced this rename and surfaced the system dialog *"Could not save screenshot. The file could not be written to the intended destination."*
 
 From **v1.2.8** onward, ClipboardOnly reads the dotfile but leaves it on disk for `screencapture` to finish with, then silently cleans up the renamed file. As a side-effect the temp file lives in `~/.clipboard_only/intercept/` for up to a minute per screenshot — it's in a hidden directory, invisible in Finder, and removed automatically once the rename completes. The user-facing promise ("no leftover screenshot files") is unchanged.
 
