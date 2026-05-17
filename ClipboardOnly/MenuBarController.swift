@@ -11,6 +11,10 @@ import Vision
 private final class ClickableMenuItemView: NSView {
     weak var target: AnyObject?
     var action: Selector?
+    /// Optional payload identifying which row this is, read back by the action
+    /// handler via `sender.clickPayload`. Needed because the menu delivers the
+    /// click to this top-level view, not to any per-row control.
+    var clickPayload: Any?
     var highlightBackgroundColor: NSColor = .selectedMenuItemColor
     var highlightForegroundColor: NSColor = .selectedMenuItemTextColor
     private var trackingArea: NSTrackingArea?
@@ -1168,10 +1172,11 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         refreshMenuDisplay()
     }
 
-    @objc private func togglePrivacyFilterButton(_ sender: NSButton) {
+    @objc private func togglePrivacyFilterButton(_ sender: Any) {
         suppressMenuRebuild = true
-        privacyFilterEnabled = sender.state == .on
+        privacyFilterEnabled.toggle()
         suppressMenuRebuild = false
+        refreshMenuDisplay()
     }
 
     @objc private func togglePrivacyFilterExpanded(_ sender: Any) {
@@ -1179,9 +1184,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         refreshMenuDisplay()
     }
 
-    @objc private func togglePrivacyFilterTypeButton(_ sender: NSButton) {
-        guard let raw = sender.identifier?.rawValue,
-              let type = PrivacyFilterType(rawValue: raw) else { return }
+    @objc private func togglePrivacyFilterTypeButton(_ sender: ClickableMenuItemView) {
+        guard let type = sender.clickPayload as? PrivacyFilterType else { return }
         if privacyFilter.enabledTypes.contains(type) {
             privacyFilter.enabledTypes.remove(type)
         } else {
@@ -1189,12 +1193,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
         }
         privacyFilter.saveToDefaults()
         masker.filter = privacyFilter
-        if let swatchView = sender.superview?.subviews.compactMap({ $0 as? NSImageView }).first {
-            swatchView.image = Self.makePrivacySwatch(
-                color: type.redactionColor,
-                filled: privacyFilter.enabledTypes.contains(type)
-            )
-        }
+        refreshMenuDisplay()
     }
 
     // MARK: – Menu item builders
@@ -1297,13 +1296,27 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func makePrivacyEnabledItem() -> NSMenuItem {
-        let button = NSButton(checkboxWithTitle: L10n.str(.privacyFilterEnabled), target: self, action: #selector(togglePrivacyFilterButton(_:)))
-        button.frame = NSRect(x: 28, y: 2, width: 212, height: 22)
-        button.state = privacyFilterEnabled ? .on : .off
-        button.font = NSFont.menuFont(ofSize: 0)
+        // A view-based menu item must handle its own clicks: NSMenu delivers
+        // mouse events to the item's top-level view, never down into subview
+        // controls. So the whole row is a ClickableMenuItemView.
+        let container = ClickableMenuItemView(frame: NSRect(x: 0, y: 0, width: 252, height: 26))
+        container.target = self
+        container.action = #selector(togglePrivacyFilterButton(_:))
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 252, height: 26))
-        container.addSubview(button)
+        let check = NSImageView(frame: NSRect(x: 30, y: 5, width: 14, height: 14))
+        let checkImage = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+        checkImage?.isTemplate = true
+        check.image = privacyFilterEnabled ? checkImage : nil
+        check.imageScaling = .scaleProportionallyDown
+        container.addSubview(check)
+        container.registerHighlightImage(check, normalColor: .labelColor)
+
+        let label = NSTextField(labelWithString: L10n.str(.privacyFilterEnabled))
+        label.frame = NSRect(x: 50, y: 3, width: 192, height: 20)
+        label.font = NSFont.menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        container.addSubview(label)
+        container.registerHighlightText(label)
 
         let item = NSMenuItem()
         item.view = container
@@ -1312,19 +1325,21 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
 
     private func makePrivacySubItem(_ titleKey: L10n.Key, type: PrivacyFilterType) -> NSMenuItem {
         let isEnabled = privacyFilter.enabledTypes.contains(type)
+        let container = ClickableMenuItemView(frame: NSRect(x: 0, y: 0, width: 252, height: 26))
+        container.target = self
+        container.action = #selector(togglePrivacyFilterTypeButton(_:))
+        container.clickPayload = type
+
         let swatchView = NSImageView(frame: NSRect(x: 30, y: 6, width: 14, height: 14))
         swatchView.image = Self.makePrivacySwatch(color: type.redactionColor, filled: isEnabled)
-
-        let button = NSButton(title: L10n.str(titleKey), target: self, action: #selector(togglePrivacyFilterTypeButton(_:)))
-        button.frame = NSRect(x: 48, y: 2, width: 192, height: 22)
-        button.identifier = NSUserInterfaceItemIdentifier(type.rawValue)
-        button.isBordered = false
-        button.alignment = .left
-        button.font = NSFont.menuFont(ofSize: 0)
-
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 252, height: 26))
         container.addSubview(swatchView)
-        container.addSubview(button)
+
+        let label = NSTextField(labelWithString: L10n.str(titleKey))
+        label.frame = NSRect(x: 50, y: 3, width: 192, height: 20)
+        label.font = NSFont.menuFont(ofSize: 0)
+        label.textColor = .labelColor
+        container.addSubview(label)
+        container.registerHighlightText(label)
 
         let item = NSMenuItem()
         item.view = container
