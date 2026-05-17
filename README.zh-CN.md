@@ -1,5 +1,7 @@
 [English](README.md) | **中文**
 
+📄 [项目说明页](https://akb4q.github.io/ClipboardOnly/project-overview.html)
+
 ---
 
 **ClipboardOnly**

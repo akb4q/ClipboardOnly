@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipboardOnly · 项目说明</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #283039;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --code-bg: #1c2128;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 48px 24px 80px; }
+  header { text-align: center; margin-bottom: 48px; }
+  header .logo {
+    width: 64px; height: 64px; border-radius: 16px;
+    background: linear-gradient(135deg, #58a6ff, #3fb950);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 32px; margin-bottom: 16px;
+  }
+  h1 { font-size: 34px; letter-spacing: -0.5px; }
+  .tagline { color: var(--muted); font-size: 16px; margin-top: 8px; }
+  .badges { margin-top: 16px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .badge {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+  }
+  section { margin-bottom: 40px; }
+  h2 {
+    font-size: 20px; margin-bottom: 16px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  h2 .ico { color: var(--accent); margin-right: 8px; }
+  p { color: #c9d1d9; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .card h3 { font-size: 15px; margin-bottom: 6px; color: var(--accent); }
+  .card p { font-size: 14px; color: var(--muted); margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  td code, p code, li code {
+    background: var(--code-bg); padding: 2px 6px; border-radius: 5px;
+    font-family: "SF Mono", Menlo, monospace; font-size: 13px; color: #79c0ff;
+  }
+  .file-name { color: var(--accent2); font-family: "SF Mono", Menlo, monospace; }
+  .flow {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; font-size: 14px;
+  }
+  .flow ol { margin-left: 20px; }
+  .flow li { margin-bottom: 8px; }
+  ul.plain { list-style: none; }
+  ul.plain li { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+  ul.plain li:last-child { border: none; }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--code-bg); color: var(--accent); margin-left: 6px; }
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="logo">📎</div>
+  <h1>ClipboardOnly</h1>
+  <div class="tagline">把 macOS 截图直接送进剪贴板的菜单栏小工具</div>
+  <div class="badges">
+    <span class="badge">macOS · Swift / AppKit</span>
+    <span class="badge">8 源文件</span>
+    <span class="badge">com.akb4q.clipboard-only</span>
+    <span class="badge">v1.2.8</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="ico">◆</span>项目简介</h2>
+  <p>
+    ClipboardOnly 是一个常驻菜单栏的 macOS 应用。它通过把系统的截图保存目录
+    重定向到一个私有拦截目录（<code>~/.clipboard_only/intercept</code>），监听该目录的文件事件，
+    在截图落盘的瞬间把图片读入内存并写进剪贴板——从而让 <code>⌘⇧4</code> / <code>⌘⇧3</code>
+    截图后无需打开任何文件即可直接 <code>⌘V</code> 粘贴。
+  </p>
+  <p>
+    在此基础上叠加了三层增值能力：<strong>OCR 文字识别</strong>（Vision 框架）、
+    <strong>隐私脱敏</strong>（识别并遮挡 API Key / 邮箱 / 手机号 / 身份证 / 信用卡 / IP / 密码）、
+    以及面向多模态大模型的 <strong>图片瘦身</strong>（长边压到 1568px，经济模式压到 512px）。
+  </p>
+</section>
+
+<section>
+  <h2><span class="ico">◆</span>核心功能</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>截图直入剪贴板</h3>
+      <p>拦截 screencapture 输出，截图完成即可直接粘贴，不留桌面文件。</p>
+    </div>
+    <div class="card">
+      <h3>自动 / 手动 OCR</h3>
+      <p>基于 Vision 的中英文识别，识别结果可一键复制；浮动面板提供手动触发。</p>
+    </div>
+    <div class="card">
+      <h3>隐私脱敏</h3>
+      <p>七类敏感信息检测，可逐项开关，对 OCR 文本和图片像素双重遮挡。</p>
+    </div>
+    <div class="card">
+      <h3>LLM 经济模式</h3>
+      <p>把图片长边压到模型实际使用的尺寸，最高省约 89% 视觉 token。</p>
+    </div>
+    <div class="card">
+      <h3>粘贴为路径</h3>
+      <p>可选把剪贴板图片落到磁盘缓存，终端里 <code>⌘V</code> 得到绝对路径。</p>
+    </div>
+    <div class="card">
+      <h3>Obsidian 集成</h3>
+      <p>一键把当前剪贴板内容发送到指定的 Obsidian vault。</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="ico">◆</span>源码结构</h2>
+  <table>
+    <thead>
+      <tr><th>文件</th><th>符号数</th><th>职责</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="file-name">ClipboardOnlyApp.swift</td><td>9</td><td>应用入口，<code>NSApplicationDelegate</code> 生命周期</td></tr>
+      <tr><td class="file-name">MenuBarController.swift</td><td>111</td><td>核心控制器：菜单栏、拦截、剪贴板、OCR、流程编排</td></tr>
+      <tr><td class="file-name">ScreenshotWatcher.swift</td><td>7</td><td>FSEvents 监听拦截目录，文件稳定后回调</td></tr>
+      <tr><td class="file-name">PrivacyFilter.swift</td><td>14</td><td><code>PrivacyFilterType</code> 枚举 + 文本敏感信息脱敏</td></tr>
+      <tr><td class="file-name">ImagePrivacyMasker.swift</td><td>15</td><td>在图片像素层面遮挡敏感区域</td></tr>
+      <tr><td class="file-name">ClipboardImageCache.swift</td><td>5</td><td>「粘贴为路径」模式的磁盘缓存读写/清理</td></tr>
+      <tr><td class="file-name">AppMenuView.swift</td><td>4</td><td>SwiftUI 菜单视图组件</td></tr>
+      <tr><td class="file-name">L10n.swift</td><td>21</td><td>本地化字符串（含 21 个键，简中 / 英）</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="ico">◆</span>关键流程：一次截图的生命周期</h2>
+  <div class="flow">
+    <ol>
+      <li><strong>初始化</strong> — <code>MenuBarController</code> 读取并备份 <code>com.apple.screencapture</code> 的原始 location/target，把保存目录改写到拦截目录。</li>
+      <li><strong>监听</strong> — <code>ScreenshotWatcher</code> 通过 FSEvents 监听拦截目录，文件写入稳定后调用 <code>handleNewFile</code>。</li>
+      <li><strong>读图</strong> — <code>loadedScreenshotImage</code> 把 PNG 解码为 <code>CGImage</code>；图片解码完成即调用 <code>showManualOCRPanel</code> 弹出浮动缩略图（早于完整管线，降低感知延迟）。</li>
+      <li><strong>脱敏</strong> — 若开启隐私过滤，<code>ImagePrivacyMasker</code> 在全分辨率图上遮挡敏感区域，保证 OCR 精度不受压缩影响。</li>
+      <li><strong>瘦身 + 写入</strong> — <code>writeImageToClipboard</code> 按 <code>llmMaxLongEdge</code>（1568 / 经济模式 512）缩放，编码 PNG 写入剪贴板，并提交真实 <code>changeCount</code>。</li>
+      <li><strong>OCR</strong> — <code>performOCR</code> 用 Vision 异步识别中英文；自动模式直接出结果，手动模式由浮动面板按钮触发。</li>
+      <li><strong>清理</strong> — screencapture 在 macOS 26.4+ 会延迟约 55 秒把点前缀临时文件 rename 成正式名；<code>pendingDotfileBaseNames</code> FIFO 识别该 rename 事件并静默删除，避免重复跑管线。</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <h2><span class="ico">◆</span>隐私过滤类型</h2>
+  <p><code>PrivacyFilterType</code> 枚举（<span class="file-name">PrivacyFilter.swift:32</span>）支持逐项开关：</p>
+  <ul class="plain">
+    <li>API Key <span class="pill">apiKey</span></li>
+    <li>信用卡号 <span class="pill">creditCard</span></li>
+    <li>邮箱地址 <span class="pill">email</span></li>
+    <li>手机号 <span class="pill">phone</span></li>
+    <li>身份证号 <span class="pill">idCard</span></li>
+    <li>IP 地址 <span class="pill">ipAddress</span></li>
+    <li>密码 <span class="pill">password</span></li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="ico">◆</span>技术要点</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>@MainActor 隔离</h3>
+      <p><code>MenuBarController</code> 全程主线程隔离，OCR / 图片编码下放到后台队列。</p>
+    </div>
+    <div class="card">
+      <h3>状态持久化</h3>
+      <p>各开关写入 <code>UserDefaults</code>；启动时智能恢复被改写的 screencapture 偏好。</p>
+    </div>
+    <div class="card">
+      <h3>崩溃自愈</h3>
+      <p>若检测到 location 仍指向拦截目录，说明上次未正常退出，回退到自存副本。</p>
+    </div>
+    <div class="card">
+      <h3>感知延迟优化</h3>
+      <p>浮动面板与完整管线解耦，缩略图在解码后约 0.8s 即出现。</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  由 Codegraph 索引（8 文件 · ~200 符号）生成 · ClipboardOnly v1.2.8 · 2026-05-18
+</footer>
+
+</div>
+</body>
+</html>
