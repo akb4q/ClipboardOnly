@@ -620,6 +620,7 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
                         completion(text.isEmpty ? nil : text)
                     }
                     request.recognitionLevel = .accurate
+                    request.automaticallyDetectsLanguage = true
                     request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
                     request.usesLanguageCorrection = true
 
@@ -1274,25 +1275,22 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private static func makeDisclosureArrow(expanded: Bool) -> NSImage {
-        let image = NSImage(size: NSSize(width: 8, height: 8))
-        image.lockFocus()
-
-        let path = NSBezierPath()
-        if expanded {
-            path.move(to: NSPoint(x: 1, y: 5.5))
-            path.line(to: NSPoint(x: 7, y: 5.5))
-            path.line(to: NSPoint(x: 4, y: 2))
-        } else {
-            path.move(to: NSPoint(x: 2, y: 1))
-            path.line(to: NSPoint(x: 2, y: 7))
-            path.line(to: NSPoint(x: 5.5, y: 4))
+        NSImage(size: NSSize(width: 8, height: 8), flipped: false) { _ in
+            let path = NSBezierPath()
+            if expanded {
+                path.move(to: NSPoint(x: 1, y: 5.5))
+                path.line(to: NSPoint(x: 7, y: 5.5))
+                path.line(to: NSPoint(x: 4, y: 2))
+            } else {
+                path.move(to: NSPoint(x: 2, y: 1))
+                path.line(to: NSPoint(x: 2, y: 7))
+                path.line(to: NSPoint(x: 5.5, y: 4))
+            }
+            path.close()
+            NSColor.secondaryLabelColor.setFill()
+            path.fill()
+            return true
         }
-        path.close()
-        NSColor.secondaryLabelColor.setFill()
-        path.fill()
-
-        image.unlockFocus()
-        return image
     }
 
     private func makePrivacyEnabledItem() -> NSMenuItem {
@@ -1347,20 +1345,16 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private static func makePrivacySwatch(color: NSColor, filled: Bool) -> NSImage {
-        let size = NSSize(width: 14, height: 14)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        let rect = NSRect(x: 2.5, y: 2.5, width: 9, height: 9)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
-        (filled ? color : NSColor.windowBackgroundColor).setFill()
-        path.fill()
-
-        color.setStroke()
-        path.lineWidth = 1.6
-        path.stroke()
-
-        image.unlockFocus()
+        let image = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { _ in
+            let rect = NSRect(x: 2.5, y: 2.5, width: 9, height: 9)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
+            (filled ? color : NSColor.windowBackgroundColor).setFill()
+            path.fill()
+            color.setStroke()
+            path.lineWidth = 1.6
+            path.stroke()
+            return true
+        }
         image.isTemplate = false
         return image
     }
@@ -1466,7 +1460,8 @@ final class MenuBarController: NSObject, ObservableObject, NSMenuDelegate {
     }
 
     private func syncScreencapturePrefs() {
-        screencaptureDefaults?.synchronize()
+        // synchronize() is a no-op since macOS 10.12 and was formally deprecated
+        // in macOS 12 — the system flushes UserDefaults automatically.
     }
 
     static func readScreenshotLocation() -> String {
@@ -1643,9 +1638,11 @@ private struct ObsidianVaultWriter {
     }
 
     private static func containsFileURL(in pasteboard: NSPasteboard) -> Bool {
-        let filenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        // NSFilenamesPboardType is a legacy Carbon type still written by some apps (e.g. Finder).
+        // .fileURL covers modern UTI-based writes; the string literal catches the old type.
+        let legacyFilenameType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
         return pasteboard.types?.contains(.fileURL) == true
-            || pasteboard.types?.contains(filenameType) == true
+            || pasteboard.types?.contains(legacyFilenameType) == true
     }
 
     private static func isDecodableImageData(_ data: Data) -> Bool {

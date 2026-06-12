@@ -108,6 +108,7 @@ final class ImagePrivacyMasker {
                         }
                     }
                     request.recognitionLevel = .accurate
+                    request.automaticallyDetectsLanguage = true
                     request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
                     request.usesLanguageCorrection = false // faster; content accuracy less important here
 
